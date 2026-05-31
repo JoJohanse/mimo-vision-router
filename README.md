@@ -1,11 +1,11 @@
-# MiMo Vision Router
+# MiMo Vision Proxy - Installer
 
-将 `mimo-v2.5-pro` 纯文本模型升级为自动支持图片输入（mimo-v2.5支持图片输入，将图片转发给v2.5）的代理方案。支持 **OpenCode** 和 **Claude Code**。
+将 `mimo-v2.5-pro` 纯文本模型升级为自动支持图片输入的代理方案。
 
 ## 原理
 
 ```
-AI 助手 (发消息 + 图片)
+OpenCode (发消息 + 图片)
   → 本地代理 localhost:3456
     → 检测到图片 → 调 mimo-v2.5 提取描述
     → 替换图片为文字 → 转发给 mimo-v2.5-pro
@@ -15,82 +15,87 @@ AI 助手 (发消息 + 图片)
 ## 文件清单
 
 ```
-mimo-vision-router/
-├── setup.ps1              # OpenCode 一键安装
-├── setup-claude.ps1       # Claude Code 一键安装
+mimo-proxy-installer/
+├── setup.ps1              # 一键安装脚本
 ├── README.md              # 本文档
-├── CLAUDE.md              # Claude Code 项目说明
 └── proxy/
-    ├── server.js          # 代理服务器 (支持 OpenAI + Anthropic API)
-    ├── mcp-launcher.js    # MCP 生命周期管理器 (OpenCode)
-    └── start.ps1          # 手动管理脚本
+    ├── server.js          # 代理服务器
+    ├── mcp-launcher.js    # MCP 生命周期管理器
+    └── start.ps1          # 手动管理脚本 (可选)
 ```
 
-## 快速开始
+## 安装
 
-### OpenCode
+### 前置条件
+
+- Node.js (v18+)
+- OpenCode 已安装并配置过至少一个 provider
+
+### 步骤
+
+1. 把整个 `mimo-proxy-installer` 文件夹复制到目标机器
+2. 打开 PowerShell，进入该目录
+3. 运行安装脚本：
 
 ```powershell
 .\setup.ps1
-# 重启 OpenCode，选择 "MiMo V2.5 Pro (Auto Vision)" 模型
 ```
 
-### Claude Code
+如果需要自定义 API Key：
 
 ```powershell
-.\setup-claude.ps1
-# 使用启动器运行
-.\start-claude.ps1
-# 或
-claude.cmd
+.\setup.ps1 -ApiKey "your-api-key-here"
 ```
 
-## API 兼容性
+4. 重启 OpenCode
 
-代理同时支持两种 API 格式：
+安装脚本会自动：
+- 复制代理文件到 `~/.config/opencode/proxy/`
+- 在 `opencode.json` 中添加代理 provider 和 MCP 配置
+- 更新 `oh-my-openagent.json` 中相关 agent 的模型指向
+- 验证 Node.js 和代理服务可用性
 
-| 客户端 | 端点 | 格式 |
-|--------|------|------|
-| OpenCode | `POST /v1/chat/completions` | OpenAI |
-| Claude Code | `POST /v1/messages` | Anthropic |
+## 使用
 
-## 手动管理代理
+安装后重启 OpenCode，代理会通过 MCP 自动启动。
+
+在模型选择器中选择 **"MiMo V2.5 Pro (Auto Vision)"**，然后正常发图片即可。
+
+### 手动管理代理
 
 ```powershell
-cd proxy
+cd ~/.config/opencode/proxy
 .\start.ps1 status   # 查看状态
 .\start.ps1 stop     # 停止
 .\start.ps1 start    # 启动
 ```
 
-## 配置说明
+## 卸载
 
-编辑 `proxy/server.js` 顶部的常量：
+1. 从 `opencode.json` 中删除 `xiaomi-mimo-proxy` provider 和 `mcp.mimo-proxy-manager` 配置
+2. 从 `oh-my-openagent.json` 中恢复 agent 模型配置
+3. 删除 `~/.config/opencode/proxy/` 目录
+4. 重启 OpenCode
+
+## 配置说明
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `PORT` | `3456` | 代理监听端口 |
 | `UPSTREAM_HOST` | `token-plan-cn.xiaomimimo.com` | Xiaomi API 地址 |
+| `PORT` | `3456` | 代理监听端口 |
 | `VISION_MODEL` | `mimo-v2.5` | 用于图片描述的多模态模型 |
+
+如需修改，编辑 `proxy/server.js` 顶部的常量。
 
 ## 故障排除
 
 **代理没启动？**
-```powershell
-node --version                    # 检查 Node.js
-netstat -ano | findstr :3456      # 检查端口占用
-curl http://127.0.0.1:3456/health # 测试代理
-```
+- 检查 Node.js 是否在 PATH 中：`node --version`
+- 检查端口 3456 是否被占用：`netstat -ano | findstr :3456`
 
-**Claude Code 连不上？**
-```powershell
-$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:3456"
-$env:ANTHROPIC_API_KEY = "your-api-key"
-claude
-```
+**图片没被处理？**
+- 确认在 OpenCode 中选择了 "MiMo V2.5 Pro (Auto Vision)" 模型
+- 检查代理是否运行：`curl http://127.0.0.1:3456/health`
 
-## 卸载
-
-1. 删除 `~/.config/mimo-vision-router/` 目录
-2. OpenCode: 从 `opencode.json` 删除 `xiaomi-mimo-proxy` provider 和 MCP 配置
-3. Claude Code: 取消 `ANTHROPIC_BASE_URL` 环境变量
+**API Key 错误？**
+- 编辑 `opencode.json` 中 `xiaomi-mimo-proxy` provider 的 `apiKey`
