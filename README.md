@@ -15,9 +15,10 @@ OpenCode (发消息 + 图片)
 ## 文件清单
 
 ```
-mimo-proxy-installer/
+mimo-vision-router/
 ├── setup.ps1              # 一键安装脚本
 ├── README.md              # 本文档
+├── CLAUDE.md              # Claude Code 项目说明
 └── proxy/
     ├── server.js          # 代理服务器
     ├── mcp-launcher.js    # MCP 生命周期管理器
