@@ -1,6 +1,6 @@
 # MiMo Vision Router
 
-将 `mimo-v2.5-pro` 纯文本模型升级为自动支持图片输入的代理方案。支持 **OpenCode** 和 **Claude Code**。
+将 `mimo-v2.5-pro` 纯文本模型升级为自动支持图片输入（mimo-v2.5支持图片输入，将图片转发给v2.5）的代理方案。支持 **OpenCode** 和 **Claude Code**。
 
 ## 原理
 
