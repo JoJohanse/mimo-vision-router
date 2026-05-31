@@ -1,101 +1,126 @@
-# MiMo Vision Proxy - Installer
+# MiMo Vision Router
 
-将 `mimo-v2.5-pro` 纯文本模型升级为自动支持图片输入的代理方案。
+让 MiMo V2.5 Pro 纯文本模型秒变多模态，自动处理图片输入。
 
-## 原理
+## 背景
+
+小米 MiMo 模型有两个版本：
+- **MiMo V2.5**：支持多模态（图片+文本）
+- **MiMo V2.5 Pro**：纯文本，不支持图片
+
+**问题**：使用 Pro 模型时无法直接发送图片。
+
+**方案**：本地代理自动将图片转为文字描述，Pro 模型也能"看懂"图片。
+
+## 架构
 
 ```
-OpenCode (发消息 + 图片)
-  → 本地代理 localhost:3456
-    → 检测到图片 → 调 mimo-v2.5 提取描述
-    → 替换图片为文字 → 转发给 mimo-v2.5-pro
-    → 返回结果
+AI 助手 → localhost:3456 (代理)
+  → 检测图片 → V2.5 提取描述
+  → 替换为文字 → V2.5 Pro
+  → 返回结果
 ```
 
-## 文件清单
+## 支持的 AI 助手
 
-```
-mimo-proxy-installer/
-├── setup.ps1              # 一键安装脚本
-├── README.md              # 本文档
-└── proxy/
-    ├── server.js          # 代理服务器
-    ├── mcp-launcher.js    # MCP 生命周期管理器
-    └── start.ps1          # 手动管理脚本 (可选)
-```
+| AI 助手 | API 格式 | 安装命令 |
+|---------|----------|----------|
+| OpenCode | OpenAI | `.\setup.ps1` |
+| Claude Code | Anthropic | `.\setup-claude.ps1` |
 
 ## 安装
 
 ### 前置条件
 
-- Node.js (v18+)
-- OpenCode 已安装并配置过至少一个 provider
+- Node.js v18+
+- 小米 MiMo API Key
 
-### 步骤
-
-1. 把整个 `mimo-proxy-installer` 文件夹复制到目标机器
-2. 打开 PowerShell，进入该目录
-3. 运行安装脚本：
+### OpenCode
 
 ```powershell
+git clone https://github.com/JoJohanse/mimo-vision-router.git
+cd mimo-vision-router
 .\setup.ps1
+# 重启 OpenCode，选择 "MiMo V2.5 Pro (Auto Vision)" 模型
 ```
 
-如果需要自定义 API Key：
+### Claude Code
 
 ```powershell
-.\setup.ps1 -ApiKey "your-api-key-here"
+.\setup-claude.ps1
+# 使用启动器
+.\start-claude.ps1
+# 或手动
+$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:3456"
+claude
 ```
 
-4. 重启 OpenCode
+## 技术实现
 
-安装脚本会自动：
-- 复制代理文件到 `~/.config/opencode/proxy/`
-- 在 `opencode.json` 中添加代理 provider 和 MCP 配置
-- 更新 `oh-my-openagent.json` 中相关 agent 的模型指向
-- 验证 Node.js 和代理服务可用性
+两条路径完全独立，不共用图片处理逻辑：
 
-## 使用
-
-安装后重启 OpenCode，代理会通过 MCP 自动启动。
-
-在模型选择器中选择 **"MiMo V2.5 Pro (Auto Vision)"**，然后正常发图片即可。
-
-### 手动管理代理
-
-```powershell
-cd ~/.config/opencode/proxy
-.\start.ps1 status   # 查看状态
-.\start.ps1 stop     # 停止
-.\start.ps1 start    # 启动
+**OpenAI 路径 (OpenCode)**：
+```javascript
+// 检测图片 → V2.5 描述 → 替换为文字 → 转发 V2.5 Pro
+function openaiHasImages(content) {
+  return Array.isArray(content) && content.some(p => p.type === 'image_url');
+}
 ```
 
-## 卸载
+**Anthropic 路径 (Claude Code)**：
+```javascript
+// 检测图片 → V2.5 描述 → 格式转换 → 转发 V2.5 Pro
+function anthropicHasImages(content) {
+  return Array.isArray(content) && content.some(p => p.type === 'image');
+}
+```
 
-1. 从 `opencode.json` 中删除 `xiaomi-mimo-proxy` provider 和 `mcp.mimo-proxy-manager` 配置
-2. 从 `oh-my-openagent.json` 中恢复 agent 模型配置
-3. 删除 `~/.config/opencode/proxy/` 目录
-4. 重启 OpenCode
+## 配置
 
-## 配置说明
+编辑 `proxy/server.js`：
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `UPSTREAM_HOST` | `token-plan-cn.xiaomimimo.com` | Xiaomi API 地址 |
-| `PORT` | `3456` | 代理监听端口 |
-| `VISION_MODEL` | `mimo-v2.5` | 用于图片描述的多模态模型 |
-
-如需修改，编辑 `proxy/server.js` 顶部的常量。
+```javascript
+const PORT = 3456;                                    // 代理端口
+const UPSTREAM_HOST = 'token-plan-cn.xiaomimimo.com'; // 小米 API
+const VISION_MODEL = 'mimo-v2.5';                     // 多模态模型
+```
 
 ## 故障排除
 
-**代理没启动？**
-- 检查 Node.js 是否在 PATH 中：`node --version`
-- 检查端口 3456 是否被占用：`netstat -ano | findstr :3456`
+```powershell
+# 检查代理状态
+curl http://127.0.0.1:3456/health
 
-**图片没被处理？**
-- 确认在 OpenCode 中选择了 "MiMo V2.5 Pro (Auto Vision)" 模型
-- 检查代理是否运行：`curl http://127.0.0.1:3456/health`
+# 检查端口占用
+netstat -ano | findstr :3456
 
-**API Key 错误？**
-- 编辑 `opencode.json` 中 `xiaomi-mimo-proxy` provider 的 `apiKey`
+# 手动启动
+node proxy/server.js
+```
+
+**图片未处理？**
+- OpenCode：确认选择 "MiMo V2.5 Pro (Auto Vision)"
+- Claude Code：确认环境变量 `ANTHROPIC_BASE_URL` 已设置
+
+## 项目结构
+
+```
+mimo-vision-router/
+├── setup.ps1              # OpenCode 安装
+├── setup-claude.ps1       # Claude Code 安装
+├── README.md / CLAUDE.md  # 文档
+└── proxy/
+    ├── server.js          # 代理服务器
+    ├── mcp-launcher.js    # MCP 生命周期管理
+    └── start.ps1          # 手动管理
+```
+
+## 链接
+
+- **小米 MiMo**: https://xiaomimimo.com
+- **OpenCode**: https://opencode.ai
+- **Claude Code**: https://docs.anthropic.com/claude-code
+
+## License
+
+MIT
