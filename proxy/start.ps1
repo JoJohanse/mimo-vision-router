@@ -5,7 +5,7 @@
 #   .\start.ps1 status  鏌ョ湅鐘舵€?
 param([string]$Action = "start")
 
-$ProxyScript = "C:\Users\Johnn\.config\opencode\proxy\server.js"
+$ProxyScript = Join-Path $PSScriptRoot "server.js"
 $Port = 3456
 
 function Start-Proxy {

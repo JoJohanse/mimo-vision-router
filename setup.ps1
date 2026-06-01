@@ -89,7 +89,7 @@ $installerDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $files = @("server.js", "mcp-launcher.js", "start.ps1")
 
 foreach ($f in $files) {
-    $src = Join-Path $installerDir "proxy" $f
+    $src = Join-Path (Join-Path $installerDir "proxy") $f
     $dst = Join-Path $proxyDir $f
     if (Test-Path $src) {
         Copy-Item -Path $src -Destination $dst -Force
@@ -153,13 +153,12 @@ if (-not $config.mcp) {
     $config | Add-Member -NotePropertyName "mcp" -NotePropertyValue @{} -Force
 }
 
-$mcpKey = "mimo-proxy-manager"
+$mcpKey = "mimo-proxy"
 if (-not $config.mcp.$mcpKey) {
     $launcherPath = (Join-Path $proxyDir "mcp-launcher.js") -replace '\\', '\\'
     $mcpConfig = @{
-        type    = "local"
-        command = @("node", $launcherPath)
-        enabled = $true
+        command = "node"
+        args    = @($launcherPath)
     }
     $config.mcp | Add-Member -NotePropertyName $mcpKey -NotePropertyValue $mcpConfig -Force
     Write-Ok "Added MCP server: $mcpKey"
