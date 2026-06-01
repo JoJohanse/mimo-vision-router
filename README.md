@@ -102,6 +102,19 @@ node proxy/server.js
 - OpenCode：确认选择 "MiMo V2.5 Pro (Auto Vision)"
 - Claude Code：确认环境变量 `ANTHROPIC_BASE_URL` 已设置
 
+**连接不上 API？**
+- 检查 MCP 配置格式是否正确（OpenCode 要求 `command` + `args` 分开写）：
+  ```json
+  "mcp": {
+    "mimo-proxy": {
+      "command": "node",
+      "args": ["C:\\path\\to\\mcp-launcher.js"]
+    }
+  }
+  ```
+  ❌ 错误格式：`"command": ["node", "..."]` 或包含 `"type": "local"`
+- 重新安装：`.\setup.ps1` 会自动写入正确格式
+
 ## 项目结构
 
 ```
