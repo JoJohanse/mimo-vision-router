@@ -14,6 +14,23 @@ const PORT = 3456;
 const UPSTREAM_HOST = 'token-plan-cn.xiaomimimo.com';
 const VISION_MODEL = 'mimo-v2.5';
 
+// ─── 模型变体配置 ──────────────────────────────────────────────
+// 变体控制思考深度 (reasoning_effort)
+// OpenCode 对 @ai-sdk/openai-compatible 使用 reasoning_effort 参数
+const SUPPORTED_VARIANTS = ['low', 'medium', 'high', 'max'];
+
+/** 解析模型名，返回 { upstreamModel, variant } */
+function resolveModelVariant(requestedModel) {
+  const lower = (requestedModel || '').toLowerCase();
+  // 匹配 mimo-v2.5-pro-auto-vision-{variant} 或 mimo-v2.5-pro-{variant}
+  const match = lower.match(/^mimo-v2\.5-pro(?:-auto-vision)?-(low|medium|high|max)$/);
+  if (match) {
+    return { upstreamModel: 'mimo-v2.5-pro', variant: match[1] };
+  }
+  // 无变体的默认模型
+  return { upstreamModel: 'mimo-v2.5-pro', variant: null };
+}
+
 // ─── 通用工具 ────────────────────────────────────────────────
 
 function extractApiKey(headers) {
@@ -131,7 +148,15 @@ async function handleOpenAI(body, headers) {
 
   const { messages, stream, ...rest } = body;
   const processedMessages = await openaiProcessMessages(messages || [], apiKey);
-  const upstreamBody = { ...rest, messages: processedMessages, model: 'mimo-v2.5-pro', stream };
+  const { upstreamModel, variant } = resolveModelVariant(body.model);
+  const upstreamBody = {
+    ...rest,
+    messages: processedMessages,
+    model: upstreamModel,
+    stream,
+    // 变体控制思考深度: reasoning_effort
+    ...(variant ? { reasoning_effort: variant } : {}),
+  };
 
   if (stream) return { mode: 'openai-stream', upstreamBody, apiKey };
 
@@ -302,7 +327,12 @@ async function handleAnthropic(body, headers) {
 
   // Step 2: 转换为 OpenAI 格式用于转发
   const openaiBody = anthropicToOpenAI({ ...body, messages: processedMessages });
-  openaiBody.model = 'mimo-v2.5-pro';
+  const { upstreamModel, variant } = resolveModelVariant(body.model);
+  openaiBody.model = upstreamModel;
+  // 变体控制思考深度: reasoning_effort
+  if (variant) {
+    openaiBody.reasoning_effort = variant;
+  }
 
   if (body.stream) return { mode: 'anthropic-stream', upstreamBody: openaiBody, apiKey };
 
@@ -459,7 +489,15 @@ const server = http.createServer((req, res) => {
   // GET /v1/models
   if (req.method === 'GET' && req.url === '/v1/models') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ data: [{ id: 'mimo-v2.5-pro-auto-vision', object: 'model', owned_by: 'xiaomi' }] }));
+    res.end(JSON.stringify({
+      data: [
+        { id: 'mimo-v2.5-pro-auto-vision',          object: 'model', owned_by: 'xiaomi' },
+        { id: 'mimo-v2.5-pro-auto-vision-low',      object: 'model', owned_by: 'xiaomi' },
+        { id: 'mimo-v2.5-pro-auto-vision-medium',   object: 'model', owned_by: 'xiaomi' },
+        { id: 'mimo-v2.5-pro-auto-vision-high',     object: 'model', owned_by: 'xiaomi' },
+        { id: 'mimo-v2.5-pro-auto-vision-max',      object: 'model', owned_by: 'xiaomi' },
+      ],
+    }));
     return;
   }
 
