@@ -127,6 +127,13 @@ if (-not $config.provider.$providerKey) {
                     context = 1000000
                     output  = 128000
                 }
+                reasoning = $true
+                variants = @{
+                    low    = @{}
+                    medium = @{}
+                    high   = @{}
+                    max    = @{}
+                }
             }
         }
         name    = "Xiaomi MiMo Proxy"
