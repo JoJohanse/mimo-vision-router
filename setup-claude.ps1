@@ -70,7 +70,7 @@ Write-Ok "API Key configured"
 
 # 获取 Base URL
 if (-not $BaseUrl) {
-    $defaultUrl = "https://token-plan-cn.xiaomimimo.com/anthropic"
+    $defaultUrl = "http://127.0.0.1:3456"
     Write-Host "  Enter API Base URL (press Enter for default):" -ForegroundColor Yellow
     Write-Host "  Default: $defaultUrl" -ForegroundColor Gray
     $inputUrl = Read-Host "  Base URL"
