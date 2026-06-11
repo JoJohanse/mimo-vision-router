@@ -64,7 +64,7 @@ $installerDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $files = @("server.js", "start.ps1")
 
 foreach ($f in $files) {
-    $src = Join-Path $installerDir "proxy" $f
+    $src = Join-Path (Join-Path $installerDir "proxy") $f
     $dst = Join-Path $installDir $f
     if (Test-Path $src) {
         Copy-Item -Path $src -Destination $dst -Force
