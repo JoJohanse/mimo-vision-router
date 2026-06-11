@@ -221,7 +221,6 @@ if (Test-Path $claudeSettingsPath) {
         $settings.env.ANTHROPIC_API_KEY = $ApiKey
         $settings.env.ANTHROPIC_AUTH_TOKEN = $ApiKey
         $settings.env.ANTHROPIC_BASE_URL = $BaseUrl
-        $settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION = "mimo-v2.5-pro-auto-vision"
         $settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-vision"
         $settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
         
