@@ -23,9 +23,13 @@ const SUPPORTED_VARIANTS = ['low', 'medium', 'high'];
 
 function resolveModelVariant(requestedModel) {
   const lower = (requestedModel || '').toLowerCase();
-  const match = lower.match(/^mimo-v2\.5-pro(?:-auto-vision)?-(low|medium|high)$/);
+  // mimo-v2.5-pro-auto-version-{variant} 或 mimo-v2.5-pro-{variant}
+  const match = lower.match(/^mimo-v2\.5-pro(?:-auto-version)?-(low|medium|high)$/);
   if (match) return { upstreamModel: 'mimo-v2.5-pro', variant: match[1] };
-  return { upstreamModel: 'mimo-v2.5-pro', variant: null };
+  // mimo-v2.5-pro-auto-version → mimo-v2.5-pro
+  if (lower.startsWith('mimo-v2.5-pro')) return { upstreamModel: 'mimo-v2.5-pro', variant: null };
+  // haiku 等其他模型直接透传
+  return { upstreamModel: requestedModel, variant: null };
 }
 
 // ─── 通用工具 ────────────────────────────────────────────────
@@ -351,23 +355,78 @@ async function handleAnthropic(body, headers) {
 
   // 处理图片
   const processedMessages = await anthropicProcessMessages(body.messages || [], apiKey);
-  const upstreamBody = { ...body, messages: processedMessages };
 
-  if (body.stream) return { mode: 'anthropic-stream', upstreamBody, apiKey };
+  // 映射模型名 (mimo-v2.5-pro-auto-version → mimo-v2.5-pro)
+  const { upstreamModel, variant } = resolveModelVariant(body.model);
+  const upstreamBody = { ...body, messages: processedMessages, model: upstreamModel };
+  if (variant) upstreamBody.reasoning_effort = variant;
+
+  if (body.stream) return { mode: 'anthropic-stream', upstreamBody, apiKey, requestedModel: body.model };
 
   const result = await anthropicHttpsRequest('/messages', upstreamBody, apiKey);
+  // 非 streaming: 替换响应中的 model 为请求的模型名
+  if (result.statusCode === 200) {
+    try {
+      const resp = JSON.parse(result.body);
+      resp.model = body.model;
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(resp) };
+    } catch {}
+  }
   return { statusCode: result.statusCode, headers: { 'Content-Type': 'application/json' }, body: result.body };
 }
 
-/** Anthropic streaming 直通 */
-function pipeAnthropicStream(upstreamBody, apiKey, res) {
+/** Anthropic streaming 直通 (替换响应中的 model) */
+function pipeAnthropicStream(upstreamBody, apiKey, res, requestedModel) {
   anthropicHttpsStream('/messages', upstreamBody, apiKey).then((upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode || 200, {
-      'Content-Type': upstreamRes.headers['content-type'] || 'text/event-stream',
+    if (upstreamRes.statusCode !== 200) {
+      res.writeHead(upstreamRes.statusCode, { 'Content-Type': 'application/json' });
+      upstreamRes.pipe(res);
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    upstreamRes.pipe(res);
+
+    if (!requestedModel) {
+      upstreamRes.pipe(res);
+      res.on('close', () => upstreamRes.destroy());
+      return;
+    }
+
+    let buffer = '';
+    upstreamRes.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const parsed = JSON.parse(line.slice(6));
+            if (parsed.model) parsed.model = requestedModel;
+            res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+          } catch {
+            res.write(line + '\n');
+          }
+        } else {
+          res.write(line + '\n');
+        }
+      }
+    });
+
+    upstreamRes.on('end', () => {
+      if (buffer) res.write(buffer);
+      res.end();
+    });
+
+    upstreamRes.on('error', (err) => {
+      console.error('[Anthropic-Stream] Error:', err.message);
+      if (!res.writableEnded) res.end();
+    });
+
     res.on('close', () => upstreamRes.destroy());
   }).catch((err) => {
     console.error('[Anthropic-Stream] Error:', err.message);
@@ -416,7 +475,7 @@ const server = http.createServer((req, res) => {
       try {
         const parsed = JSON.parse(body);
         const result = await handleAnthropic(parsed, req.headers);
-        if (result.mode === 'anthropic-stream') { pipeAnthropicStream(result.upstreamBody, result.apiKey, res); return; }
+        if (result.mode === 'anthropic-stream') { pipeAnthropicStream(result.upstreamBody, result.apiKey, res, result.requestedModel); return; }
         res.writeHead(result.statusCode, result.headers || { 'Content-Type': 'application/json' });
         res.end(result.body);
       } catch (err) {

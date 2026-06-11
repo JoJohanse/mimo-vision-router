@@ -273,10 +273,10 @@ if (Test-Path $claudeSettingsPath) {
             ANTHROPIC_SMALL_FAST_MODEL = "mimo-v2.5"
             ANTHROPIC_DEFAULT_HAIKU_MODEL = "mimo-v2.5"
             ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = "MiMo V2.5"
-            ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro"
-            ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
-            ANTHROPIC_DEFAULT_OPUS_MODEL = "mimo-v2.5-pro"
-            ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
+            ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-version"
+            ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro(Auto Version)"
+            ANTHROPIC_DEFAULT_OPUS_MODEL = "mimo-v2.5-pro-auto-version"
+            ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = "MiMo V2.5 Pro(Auto Version)"
         }
         $settings.env = $newEnv
         
