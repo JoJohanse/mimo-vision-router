@@ -34,6 +34,9 @@ function resolveModelVariant(requestedModel) {
 // ─── 通用工具 ────────────────────────────────────────────────
 
 function extractApiKey(headers) {
+  // 支持 Authorization: Bearer xxx (OpenAI) 和 x-api-key: xxx (Anthropic/Claude Code)
+  const xKey = headers['x-api-key'] || '';
+  if (xKey) return xKey.trim();
   const auth = headers['authorization'] || headers['Authorization'] || '';
   return auth.replace(/^Bearer\s+/i, '').trim();
 }

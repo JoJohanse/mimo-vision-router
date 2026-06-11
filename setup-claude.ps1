@@ -86,6 +86,22 @@ Write-Ok "Base URL: $BaseUrl"
 
 Write-Step "[4/7] Installing proxy..."
 
+# 杀掉占用端口的旧进程（可能来自其他代理如 opencode）
+$portCheck = netstat -ano 2>$null | Select-String ":${Port}\s.*LISTENING"
+if ($portCheck) {
+    $oldPid = ($portCheck -split '\s+')[-1]
+    if ($oldPid -match '^\d+$') {
+        $oldProc = Get-Process -Id ([int]$oldPid) -ErrorAction SilentlyContinue
+        if ($oldProc) {
+            Write-Warn "Port $Port is in use by: $($oldProc.ProcessName) (PID $oldPid)"
+            Write-Host "  Killing old process to free port..." -ForegroundColor Yellow
+            Stop-Process -Id ([int]$oldPid) -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+            Write-Ok "Port $Port freed"
+        }
+    }
+}
+
 $installDir = "$env:USERPROFILE\.config\mimo-vision-router"
 if (-not (Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
@@ -212,20 +228,56 @@ if (Test-Path $claudeSettingsPath) {
     try {
         $settings = Get-Content $claudeSettingsPath -Raw | ConvertFrom-Json
         
-        # 确保 env 节点存在
-        if (-not $settings.env) {
-            $settings | Add-Member -NotePropertyName "env" -NotePropertyValue @{} -Force
+        # 显示当前配置并警告用户
+        Write-Host ""
+        Write-Host "  ⚠️  WARNING: This will overwrite your existing Claude Code settings!" -ForegroundColor Yellow
+        Write-Host "  ─────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
+        
+        if ($settings.env.ANTHROPIC_BASE_URL) {
+            Write-Host "  Current ANTHROPIC_BASE_URL: $($settings.env.ANTHROPIC_BASE_URL)" -ForegroundColor Gray
+        }
+        if ($settings.env.ANTHROPIC_AUTH_TOKEN) {
+            $maskedToken = if ($settings.env.ANTHROPIC_AUTH_TOKEN.Length -gt 8) { 
+                "$($settings.env.ANTHROPIC_AUTH_TOKEN.Substring(0, 8))..." 
+            } else { 
+                "***" 
+            }
+            Write-Host "  Current ANTHROPIC_AUTH_TOKEN: $maskedToken" -ForegroundColor Gray
+        }
+        if ($settings.env.ANTHROPIC_MODEL) {
+            Write-Host "  Current ANTHROPIC_MODEL: $($settings.env.ANTHROPIC_MODEL)" -ForegroundColor Gray
+        }
+        if ($settings.model) {
+            Write-Host "  Current model: $($settings.model)" -ForegroundColor Gray
         }
         
-        # 写入环境变量
-        $settings.env.ANTHROPIC_API_KEY = $ApiKey
-        $settings.env.ANTHROPIC_AUTH_TOKEN = $ApiKey
-        $settings.env.ANTHROPIC_BASE_URL = $BaseUrl
-        $settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-vision"
-        $settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
+        Write-Host ""
+        Write-Host "  New settings:" -ForegroundColor Cyan
+        Write-Host "  ANTHROPIC_BASE_URL: $BaseUrl" -ForegroundColor Cyan
+        Write-Host "  ANTHROPIC_AUTH_TOKEN: $($ApiKey.Substring(0, [Math]::Min(8, $ApiKey.Length)))..." -ForegroundColor Cyan
+        Write-Host "  model: sonnet" -ForegroundColor Cyan
+        Write-Host ""
+        
+        # 确认是否继续
+        $confirm = Read-Host "  Continue? (y/N)"
+        if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+            Write-Warn "Skipped settings update"
+            Write-Host "  You can manually update $claudeSettingsPath" -ForegroundColor Yellow
+            return
+        }
+        
+        # 用新 env 对象整体替换（避免 PSCustomObject 无法新增属性的问题）
+        $newEnv = @{
+            ANTHROPIC_API_KEY = $ApiKey
+            ANTHROPIC_AUTH_TOKEN = $ApiKey
+            ANTHROPIC_BASE_URL = $BaseUrl
+            ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-vision"
+            ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
+        }
+        $settings.env = $newEnv
         
         # 设置默认模型为 sonnet (会映射到 mimo-v2.5-pro-auto-vision)
-        $settings.model = "sonnet"
+        $settings | Add-Member -MemberType NoteProperty -Name "model" -Value "sonnet" -Force
         
         # 保存配置
         $settings | ConvertTo-Json -Depth 10 | Set-Content $claudeSettingsPath -Encoding UTF8
