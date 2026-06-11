@@ -31,7 +31,7 @@ function Write-Step { param($msg) Write-Host "`n$msg" -ForegroundColor Cyan }
 
 # ─── 1. 检查 Node.js ──────────────────────────────────────────
 
-Write-Step "[1/5] Checking Node.js..."
+Write-Step "[1/6] Checking Node.js..."
 try {
     $nodeVer = & node --version 2>&1
     Write-Ok "Node.js $nodeVer"
@@ -42,7 +42,7 @@ try {
 
 # ─── 2. 检查 Claude Code ─────────────────────────────────────
 
-Write-Step "[2/5] Checking Claude Code..."
+Write-Step "[2/6] Checking Claude Code..."
 try {
     $claudeVer = & claude --version 2>&1
     Write-Ok "Claude Code $claudeVer"
@@ -53,7 +53,7 @@ try {
 
 # ─── 3. 复制代理文件 ──────────────────────────────────────────
 
-Write-Step "[3/5] Installing proxy..."
+Write-Step "[3/6] Installing proxy..."
 
 $installDir = "$env:USERPROFILE\.config\mimo-vision-router"
 if (-not (Test-Path $installDir)) {
@@ -61,7 +61,7 @@ if (-not (Test-Path $installDir)) {
 }
 
 $installerDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$files = @("server.js", "start.ps1")
+$files = @("server.js", "mcp-launcher.js", "start.ps1")
 
 foreach ($f in $files) {
     $src = Join-Path (Join-Path $installerDir "proxy") $f
@@ -77,7 +77,7 @@ foreach ($f in $files) {
 
 # ─── 4. 创建启动脚本 ──────────────────────────────────────────
 
-Write-Step "[4/5] Creating launcher..."
+Write-Step "[4/6] Creating launcher..."
 
 $launcherPath = Join-Path $installDir "start-claude.ps1"
 $launcherContent = @"
@@ -145,7 +145,25 @@ if (`$ClaudeArgs) {
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding UTF8
 Write-Ok "start-claude.ps1"
 
-# ─── 5. 创建快速启动脚本 (用户目录) ──────────────────────────
+# ─── 5. 配置 MCP 服务器（代理跟随 Claude 自动启动） ──────────
+
+Write-Step "[5/6] Configuring MCP server..."
+
+$mcpLauncher = Join-Path $installDir "mcp-launcher.js"
+try {
+    # 移除已有的 mimo-proxy MCP 配置（如果存在）
+    & claude mcp remove mimo-proxy 2>$null
+} catch {}
+
+try {
+    & claude mcp add mimo-proxy -- node $mcpLauncher
+    Write-Ok "MCP server 'mimo-proxy' configured"
+    Write-Host "  Proxy will auto-start when Claude Code launches" -ForegroundColor Gray
+} catch {
+    Write-Warn "Failed to configure MCP server. You can manually start the proxy with start-claude.ps1"
+}
+
+# ─── 6. 创建快速启动脚本 (用户目录) ──────────────────────────
 
 $quickStart = "$env:USERPROFILE\.config\mimo-vision-router\claude.cmd"
 $quickStartContent = @"
@@ -162,18 +180,18 @@ Write-Host "══════════════════════�
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Green
 Write-Host ""
+Write-Host "  Proxy will auto-start when Claude Code launches." -ForegroundColor Cyan
+Write-Host ""
 Write-Host "  Usage:"
-Write-Host "    # Option 1: Direct launch"
+Write-Host "    # Just run Claude Code normally:"
+Write-Host "    claude"
+Write-Host ""
+Write-Host "    # Or use the launcher (manual proxy control):"
 Write-Host "    cd $installDir"
 Write-Host "    .\start-claude.ps1"
 Write-Host ""
-Write-Host "    # Option 2: Quick command"
-Write-Host "    claude.cmd"
-Write-Host ""
-Write-Host "    # Option 3: Manual"
-Write-Host "    `$env:ANTHROPIC_BASE_URL = 'http://127.0.0.1:$Port'"
-Write-Host "    `$env:ANTHROPIC_API_KEY = 'your-api-key'"
-Write-Host "    claude"
+Write-Host "  Verify MCP server:"
+Write-Host "    claude mcp list"
 Write-Host ""
 Write-Host "  Proxy installed to: $installDir"
 Write-Host ""
