@@ -220,6 +220,7 @@ if (Test-Path $claudeSettingsPath) {
         # 写入环境变量
         $settings.env.ANTHROPIC_AUTH_TOKEN = $ApiKey
         $settings.env.ANTHROPIC_BASE_URL = $BaseUrl
+        $settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION = "mimo-v2.5-pro-auto-vision"
         
         # 保存配置
         $settings | ConvertTo-Json -Depth 10 | Set-Content $claudeSettingsPath -Encoding UTF8
@@ -233,7 +234,7 @@ if (Test-Path $claudeSettingsPath) {
 } else {
     Write-Warn "Claude Code settings.json not found at $claudeSettingsPath"
     Write-Host "  Please manually create settings.json with:" -ForegroundColor Yellow
-    Write-Host "  {`"env`": {`"ANTHROPIC_AUTH_TOKEN`": `"$ApiKey`", `"ANTHROPIC_BASE_URL`": `"$BaseUrl`"}}" -ForegroundColor Gray
+    Write-Host "  {`"env`": {`"ANTHROPIC_AUTH_TOKEN`": `"$ApiKey`", `"ANTHROPIC_BASE_URL`": `"$BaseUrl`", `"ANTHROPIC_CUSTOM_MODEL_OPTION`": `"mimo-v2.5-pro-auto-vision`"}}" -ForegroundColor Gray
 }
 
 # ─── 完成 ─────────────────────────────────────────────────────
