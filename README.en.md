@@ -59,6 +59,42 @@ cd mimo-vision-router
 
 After installation, the proxy **auto-starts** via MCP - no manual startup needed.
 
+### Installation Notes
+
+> **Please read the following carefully before running the installation script.**
+
+#### Port Cleanup
+
+The setup script automatically checks if port `3456` is in use. If an old proxy process (e.g., the OpenCode version) is running, the script will **automatically kill** it to free the port.
+
+#### Claude Code Configuration Overwrite
+
+When running `setup-claude.ps1`, the script will **overwrite** the following settings in `~/.claude/settings.json`:
+
+| Setting | Before (example) | After |
+|---------|------------------|-------|
+| `ANTHROPIC_BASE_URL` | Original API URL | `http://127.0.0.1:3456` |
+| `ANTHROPIC_AUTH_TOKEN` | Original API Key | MiMo API Key |
+| `ANTHROPIC_API_KEY` | (new) | MiMo API Key |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | (new) | `mimo-v2.5-pro-auto-vision` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` | (new) | `MiMo V2.5 Pro (Auto Vision)` |
+| `model` | Original model name | `sonnet` |
+
+The following legacy settings will be **removed**:
+- `ANTHROPIC_MODEL`
+- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+- `ANTHROPIC_DEFAULT_OPUS_MODEL`
+
+The script displays a comparison of current vs. new settings and requires you to type `y` to confirm. Any other input skips the configuration update.
+
+#### Backup Recommendation
+
+To preserve your existing configuration, back it up first:
+
+```powershell
+Copy-Item "$env:USERPROFILE\.claude\settings.json" "$env:USERPROFILE\.claude\settings.json.bak"
+```
+
 ## Features
 
 - **MCP Auto-Start**: Proxy starts/stops automatically with AI assistants

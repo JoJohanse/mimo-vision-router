@@ -59,6 +59,42 @@ cd mimo-vision-router
 
 安装完成后，代理会通过 MCP **自动启动**，无需手动运行。
 
+### 安装注意事项
+
+> **请在运行安装脚本前仔细阅读以下内容。**
+
+#### 端口占用清理
+
+安装脚本会自动检测端口 `3456` 是否被占用。如果有旧的代理进程（如 OpenCode 版本的代理）正在运行，脚本会**自动终止**该进程以释放端口。
+
+#### Claude Code 配置覆盖
+
+运行 `setup-claude.ps1` 时，脚本会**覆盖** `~/.claude/settings.json` 中的以下配置：
+
+| 配置项 | 原值（示例） | 新值 |
+|--------|-------------|------|
+| `ANTHROPIC_BASE_URL` | 原 API 地址 | `http://127.0.0.1:3456` |
+| `ANTHROPIC_AUTH_TOKEN` | 原 API Key | MiMo API Key |
+| `ANTHROPIC_API_KEY` | （新增） | MiMo API Key |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | （新增） | `mimo-v2.5-pro-auto-vision` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` | （新增） | `MiMo V2.5 Pro (Auto Vision)` |
+| `model` | 原模型名 | `sonnet` |
+
+同时，以下旧配置会被**移除**：
+- `ANTHROPIC_MODEL`
+- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+- `ANTHROPIC_DEFAULT_OPUS_MODEL`
+
+脚本会在覆盖前显示当前配置与新配置的对比，并要求用户输入 `y` 确认。输入其他内容则跳过配置更新。
+
+#### 备份建议
+
+如果需要保留原有配置，建议先手动备份：
+
+```powershell
+Copy-Item "$env:USERPROFILE\.claude\settings.json" "$env:USERPROFILE\.claude\settings.json.bak"
+```
+
 ## 功能特性
 
 - **MCP 自动启动**：代理随 AI 助手自动启动/关闭
