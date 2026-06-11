@@ -218,6 +218,7 @@ if (Test-Path $claudeSettingsPath) {
         }
         
         # 写入环境变量
+        $settings.env.ANTHROPIC_API_KEY = $ApiKey
         $settings.env.ANTHROPIC_AUTH_TOKEN = $ApiKey
         $settings.env.ANTHROPIC_BASE_URL = $BaseUrl
         $settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION = "mimo-v2.5-pro-auto-vision"
