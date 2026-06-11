@@ -19,6 +19,7 @@
 
 param(
     [string]$ApiKey,
+    [string]$BaseUrl,
     [int]$Port = 3456
 )
 
@@ -31,7 +32,7 @@ function Write-Step { param($msg) Write-Host "`n$msg" -ForegroundColor Cyan }
 
 # ─── 1. 检查 Node.js ──────────────────────────────────────────
 
-Write-Step "[1/6] Checking Node.js..."
+Write-Step "[1/7] Checking Node.js..."
 try {
     $nodeVer = & node --version 2>&1
     Write-Ok "Node.js $nodeVer"
@@ -42,7 +43,7 @@ try {
 
 # ─── 2. 检查 Claude Code ─────────────────────────────────────
 
-Write-Step "[2/6] Checking Claude Code..."
+Write-Step "[2/7] Checking Claude Code..."
 try {
     $claudeVer = & claude --version 2>&1
     Write-Ok "Claude Code $claudeVer"
@@ -51,9 +52,39 @@ try {
     Write-Host "  Continuing anyway..."
 }
 
-# ─── 3. 复制代理文件 ──────────────────────────────────────────
+# ─── 3. 配置 API 凭证 ────────────────────────────────────────
 
-Write-Step "[3/6] Installing proxy..."
+Write-Step "[3/7] Configuring API credentials..."
+
+# 获取 API Key
+if (-not $ApiKey) {
+    Write-Host "  Enter your Xiaomi MiMo API Key:" -ForegroundColor Yellow
+    Write-Host "  (Format: tp-xxxx, get from https://xiaomimimo.com)" -ForegroundColor Gray
+    $ApiKey = Read-Host "  API Key"
+    if (-not $ApiKey) {
+        Write-Err "API Key is required"
+        exit 1
+    }
+}
+Write-Ok "API Key configured"
+
+# 获取 Base URL
+if (-not $BaseUrl) {
+    $defaultUrl = "https://token-plan-cn.xiaomimimo.com/anthropic"
+    Write-Host "  Enter API Base URL (press Enter for default):" -ForegroundColor Yellow
+    Write-Host "  Default: $defaultUrl" -ForegroundColor Gray
+    $inputUrl = Read-Host "  Base URL"
+    if ($inputUrl) {
+        $BaseUrl = $inputUrl
+    } else {
+        $BaseUrl = $defaultUrl
+    }
+}
+Write-Ok "Base URL: $BaseUrl"
+
+# ─── 4. 复制代理文件 ──────────────────────────────────────────
+
+Write-Step "[4/7] Installing proxy..."
 
 $installDir = "$env:USERPROFILE\.config\mimo-vision-router"
 if (-not (Test-Path $installDir)) {
@@ -75,9 +106,9 @@ foreach ($f in $files) {
     }
 }
 
-# ─── 4. 创建启动脚本 ──────────────────────────────────────────
+# ─── 5. 创建启动脚本 ──────────────────────────────────────────
 
-Write-Step "[4/6] Creating launcher..."
+Write-Step "[5/7] Creating launcher..."
 
 $launcherPath = Join-Path $installDir "start-claude.ps1"
 $launcherContent = @"
@@ -145,9 +176,9 @@ if (`$ClaudeArgs) {
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding UTF8
 Write-Ok "start-claude.ps1"
 
-# ─── 5. 配置 MCP 服务器（代理跟随 Claude 自动启动） ──────────
+# ─── 6. 配置 MCP 服务器（代理跟随 Claude 自动启动） ──────────
 
-Write-Step "[5/6] Configuring MCP server..."
+Write-Step "[6/7] Configuring MCP server..."
 
 $mcpLauncher = Join-Path $installDir "mcp-launcher.js"
 try {
@@ -163,8 +194,7 @@ try {
     Write-Warn "Failed to configure MCP server. You can manually start the proxy with start-claude.ps1"
 }
 
-# ─── 6. 创建快速启动脚本 (用户目录) ──────────────────────────
-
+# 创建快速启动脚本
 $quickStart = "$env:USERPROFILE\.config\mimo-vision-router\claude.cmd"
 $quickStartContent = @"
 @echo off
@@ -172,6 +202,39 @@ powershell -ExecutionPolicy Bypass -File "$installDir\start-claude.ps1" %*
 "@
 Set-Content -Path $quickStart -Value $quickStartContent -Encoding ASCII
 Write-Ok "claude.cmd (quick launcher)"
+
+# ─── 7. 写入环境变量到 Claude Code 配置 ──────────────────────
+
+Write-Step "[7/7] Writing environment variables to Claude Code settings..."
+
+$claudeSettingsPath = "$env:USERPROFILE\.claude\settings.json"
+if (Test-Path $claudeSettingsPath) {
+    try {
+        $settings = Get-Content $claudeSettingsPath -Raw | ConvertFrom-Json
+        
+        # 确保 env 节点存在
+        if (-not $settings.env) {
+            $settings | Add-Member -NotePropertyName "env" -NotePropertyValue @{} -Force
+        }
+        
+        # 写入环境变量
+        $settings.env.ANTHROPIC_AUTH_TOKEN = $ApiKey
+        $settings.env.ANTHROPIC_BASE_URL = $BaseUrl
+        
+        # 保存配置
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $claudeSettingsPath -Encoding UTF8
+        Write-Ok "Environment variables written to settings.json"
+        Write-Host "  ANTHROPIC_AUTH_TOKEN: $($ApiKey.Substring(0, [Math]::Min(8, $ApiKey.Length)))..." -ForegroundColor Gray
+        Write-Host "  ANTHROPIC_BASE_URL: $BaseUrl" -ForegroundColor Gray
+    } catch {
+        Write-Warn "Failed to update settings.json: $_"
+        Write-Host "  Please manually add these to $claudeSettingsPath" -ForegroundColor Yellow
+    }
+} else {
+    Write-Warn "Claude Code settings.json not found at $claudeSettingsPath"
+    Write-Host "  Please manually create settings.json with:" -ForegroundColor Yellow
+    Write-Host "  {`"env`": {`"ANTHROPIC_AUTH_TOKEN`": `"$ApiKey`", `"ANTHROPIC_BASE_URL`": `"$BaseUrl`"}}" -ForegroundColor Gray
+}
 
 # ─── 完成 ─────────────────────────────────────────────────────
 

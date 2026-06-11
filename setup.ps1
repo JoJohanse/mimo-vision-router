@@ -23,6 +23,7 @@
 
 param(
     [string]$ApiKey,
+    [string]$BaseUrl,
     [string]$OpenCodeDir,
     [int]$Port = 3456
 )
@@ -38,7 +39,7 @@ function Write-Step { param($msg) Write-Host "`n$msg" -ForegroundColor Cyan }
 
 # ─── 0. 检测 OpenCode 配置目录 ─────────────────────────────────
 
-Write-Step "[1/6] Detecting OpenCode config directory..."
+Write-Step "[1/7] Detecting OpenCode config directory..."
 
 if (-not $OpenCodeDir) {
     $candidates = @(
@@ -65,7 +66,7 @@ Write-Ok "Found: $OpenCodeDir"
 
 # ─── 1. 检查 Node.js ──────────────────────────────────────────
 
-Write-Step "[2/6] Checking Node.js..."
+Write-Step "[2/7] Checking Node.js..."
 
 try {
     $nodeVer = & node --version 2>&1
@@ -76,9 +77,39 @@ try {
     exit 1
 }
 
+# ─── 2. 配置 API 凭证 ────────────────────────────────────────
+
+Write-Step "[3/7] Configuring API credentials..."
+
+# 获取 API Key
+if (-not $ApiKey) {
+    Write-Host "  Enter your Xiaomi MiMo API Key:" -ForegroundColor Yellow
+    Write-Host "  (Format: tp-xxxx, get from https://xiaomimimo.com)" -ForegroundColor Gray
+    $ApiKey = Read-Host "  API Key"
+    if (-not $ApiKey) {
+        Write-Err "API Key is required"
+        exit 1
+    }
+}
+Write-Ok "API Key configured"
+
+# 获取 Base URL
+if (-not $BaseUrl) {
+    $defaultUrl = "https://token-plan-cn.xiaomimimo.com/v1"
+    Write-Host "  Enter API Base URL (press Enter for default):" -ForegroundColor Yellow
+    Write-Host "  Default: $defaultUrl" -ForegroundColor Gray
+    $inputUrl = Read-Host "  Base URL"
+    if ($inputUrl) {
+        $BaseUrl = $inputUrl
+    } else {
+        $BaseUrl = $defaultUrl
+    }
+}
+Write-Ok "Base URL: $BaseUrl"
+
 # ─── 2. 复制代理文件 ──────────────────────────────────────────
 
-Write-Step "[3/6] Copying proxy files..."
+Write-Step "[4/7] Copying proxy files..."
 
 $proxyDir = Join-Path $OpenCodeDir "proxy"
 if (-not (Test-Path $proxyDir)) {
@@ -102,7 +133,7 @@ foreach ($f in $files) {
 
 # ─── 3. 修补 opencode.json ───────────────────────────────────
 
-Write-Step "[4/6] Patching opencode.json..."
+Write-Step "[5/7] Patching opencode.json..."
 
 $configPath = Join-Path $OpenCodeDir "opencode.json"
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -139,8 +170,8 @@ if (-not $config.provider.$providerKey) {
         name    = "Xiaomi MiMo Proxy"
         npm     = "@ai-sdk/openai-compatible"
         options = @{
-            apiKey     = if ($ApiKey) { $ApiKey } else { "YOUR_API_KEY_HERE" }
-            baseURL    = "http://127.0.0.1:$Port/v1"
+            apiKey     = $ApiKey
+            baseURL    = $BaseUrl
             setCacheKey = $true
         }
     }
@@ -148,11 +179,9 @@ if (-not $config.provider.$providerKey) {
     Write-Ok "Added provider: $providerKey"
 } else {
     Write-Warn "Provider '$providerKey' already exists, skipping"
-    # 更新 baseURL 中的端口
-    $config.provider.$providerKey.options.baseURL = "http://127.0.0.1:$Port/v1"
-    if ($ApiKey) {
-        $config.provider.$providerKey.options.apiKey = $ApiKey
-    }
+    # 更新 baseURL 和 apiKey
+    $config.provider.$providerKey.options.baseURL = $BaseUrl
+    $config.provider.$providerKey.options.apiKey = $ApiKey
 }
 
 # 添加 MCP 配置 (如果不存在)
@@ -196,7 +225,7 @@ Write-Ok "opencode.json updated"
 
 # ─── 4. 修补 oh-my-openagent.json ────────────────────────────
 
-Write-Step "[5/6] Patching oh-my-openagent.json..."
+Write-Step "[6/7] Patching oh-my-openagent.json..."
 
 $omaPath = Join-Path $OpenCodeDir "oh-my-openagent.json"
 if (Test-Path $omaPath) {
@@ -231,7 +260,7 @@ if (Test-Path $omaPath) {
 
 # ─── 5. 验证 ──────────────────────────────────────────────────
 
-Write-Step "[6/6] Verifying installation..."
+Write-Step "[7/7] Verifying installation..."
 
 # 检查文件完整性
 $allFilesExist = $true
