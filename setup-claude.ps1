@@ -221,6 +221,11 @@ if (Test-Path $claudeSettingsPath) {
         $settings.env.ANTHROPIC_AUTH_TOKEN = $ApiKey
         $settings.env.ANTHROPIC_BASE_URL = $BaseUrl
         $settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION = "mimo-v2.5-pro-auto-vision"
+        $settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-vision"
+        $settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
+        
+        # 设置默认模型为 sonnet (会映射到 mimo-v2.5-pro-auto-vision)
+        $settings.model = "sonnet"
         
         # 保存配置
         $settings | ConvertTo-Json -Depth 10 | Set-Content $claudeSettingsPath -Encoding UTF8
