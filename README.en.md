@@ -17,11 +17,20 @@ Xiaomi MiMo has two model versions:
 ## Architecture
 
 ```
-AI Assistant → localhost:3456 (proxy)
-  → Detect images → V2.5 extracts description
-  → Replace with text → V2.5 Pro
+Claude Code → localhost:3456 (proxy)
+  → Detect images → mimo-v2.5 (Anthropic) describes images
+  → Replace with text → mimo-v2.5-pro (Anthropic)
+  → Return result
+
+OpenCode → localhost:3456 (proxy)
+  → Detect images → mimo-v2.5 (OpenAI) describes images
+  → Replace with text → mimo-v2.5-pro (OpenAI)
   → Return result
 ```
+
+Two completely independent paths:
+- **Anthropic path**: Claude Code → proxy → Xiaomi Anthropic endpoint (`/anthropic/v1/messages`)
+- **OpenAI path**: OpenCode → proxy → Xiaomi OpenAI endpoint (`/v1/chat/completions`)
 
 ## Supported AI Assistants
 
@@ -53,8 +62,8 @@ cd mimo-vision-router
 git clone https://github.com/JoJohanse/mimo-vision-router.git
 cd mimo-vision-router
 .\setup-claude.ps1
-# Script will prompt for API Key and Base URL
-# Restart Claude Code, use /model to select sonnet (MiMo V2.5 Pro)
+# Script will prompt for API Key
+# Restart Claude Code, just start using it (default sonnet → mimo-v2.5-pro)
 ```
 
 After installation, the proxy **auto-starts** via MCP - no manual startup needed.
@@ -65,27 +74,23 @@ After installation, the proxy **auto-starts** via MCP - no manual startup needed
 
 #### Port Cleanup
 
-The setup script automatically checks if port `3456` is in use. If an old proxy process (e.g., the OpenCode version) is running, the script will **automatically kill** it to free the port.
+The setup script automatically checks if port `3456` is in use. If an old proxy process is running, the script will **automatically kill** it to free the port.
 
 #### Claude Code Configuration Overwrite
 
-When running `setup-claude.ps1`, the script will **overwrite** the following settings in `~/.claude/settings.json`:
+When running `setup-claude.ps1`, the script will **overwrite** environment variables in `~/.claude/settings.json`:
 
-| Setting | Before (example) | After |
-|---------|------------------|-------|
-| `ANTHROPIC_BASE_URL` | Original API URL | `http://127.0.0.1:3456` |
-| `ANTHROPIC_AUTH_TOKEN` | Original API Key | MiMo API Key |
-| `ANTHROPIC_API_KEY` | (new) | MiMo API Key |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | (new) | `mimo-v2.5-pro-auto-vision` |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` | (new) | `MiMo V2.5 Pro (Auto Vision)` |
-| `model` | Original model name | `sonnet` |
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `ANTHROPIC_BASE_URL` | `http://127.0.0.1:3456` | Local proxy address |
+| `ANTHROPIC_AUTH_TOKEN` | User API Key | Authentication |
+| `ANTHROPIC_SMALL_FAST_MODEL` | `mimo-v2.5` | Background tasks model |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `mimo-v2.5` | haiku alias mapping |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `mimo-v2.5-pro` | sonnet alias mapping (displays as MiMo V2.5 Pro (Auto Vision)) |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `mimo-v2.5-pro` | opus alias mapping (displays as MiMo V2.5 Pro (Auto Vision)) |
+| `model` | `sonnet` | Default model |
 
-The following legacy settings will be **removed**:
-- `ANTHROPIC_MODEL`
-- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
-- `ANTHROPIC_DEFAULT_OPUS_MODEL`
-
-The script displays a comparison of current vs. new settings and requires you to type `y` to confirm. Any other input skips the configuration update.
+The script displays a comparison of current vs. new settings and requires you to type `y` to confirm.
 
 #### Backup Recommendation
 
@@ -100,28 +105,8 @@ Copy-Item "$env:USERPROFILE\.claude\settings.json" "$env:USERPROFILE\.claude\set
 - **MCP Auto-Start**: Proxy starts/stops automatically with AI assistants
 - **Automatic Image Processing**: Detect images → generate descriptions → replace with text
 - **Dual Format Support**: Both OpenAI and Anthropic API formats
-- **Model Variants**: Support low/medium/high/max reasoning depth
+- **Model Variants**: Support low/medium/high reasoning depth
 - **One-Click Install**: Interactive API credential configuration
-
-## Technical Implementation
-
-Two completely independent paths with separate image processing logic:
-
-**OpenAI Path (OpenCode)**:
-```javascript
-// Detect images → V2.5 description → replace with text → forward to V2.5 Pro
-function openaiHasImages(content) {
-  return Array.isArray(content) && content.some(p => p.type === 'image_url');
-}
-```
-
-**Anthropic Path (Claude Code)**:
-```javascript
-// Detect images → V2.5 description → format conversion → forward to V2.5 Pro
-function anthropicHasImages(content) {
-  return Array.isArray(content) && content.some(p => p.type === 'image');
-}
-```
 
 ## Configuration
 
@@ -132,23 +117,32 @@ Edit `proxy/server.js`:
 ```javascript
 const PORT = 3456;                                    // Proxy port
 const UPSTREAM_HOST = 'token-plan-cn.xiaomimimo.com'; // Xiaomi API
-const VISION_MODEL = 'mimo-v2.5';                     // Multimodal model
+const VISION_MODEL = 'mimo-v2.5';                     // Multimodal model (for image description)
 ```
 
 ### Claude Code Model Mapping
 
-Claude Code uses built-in aliases (sonnet/haiku/opus) mapped to custom models:
+Claude Code uses built-in aliases (sonnet/haiku/opus) mapped to MiMo models:
 
 ```json
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:3456",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5-pro-auto-vision",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "MiMo V2.5 Pro (Auto Vision)"
+    "ANTHROPIC_AUTH_TOKEN": "tp-xxxx",
+    "ANTHROPIC_SMALL_FAST_MODEL": "mimo-v2.5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "mimo-v2.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5-pro",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "mimo-v2.5-pro"
   },
   "model": "sonnet"
 }
 ```
+
+| Alias | Mapped Model | Description |
+|-------|--------------|-------------|
+| `haiku` | `mimo-v2.5` | Fast/light tasks |
+| `sonnet` | `mimo-v2.5-pro` | Default main model |
+| `opus` | `mimo-v2.5-pro` | Complex reasoning tasks |
 
 ### Model Variants
 
@@ -156,11 +150,10 @@ Control reasoning depth via model name suffix:
 
 | Model | Description |
 |-------|-------------|
-| `mimo-v2.5-pro-auto-vision` | Default (no variant) |
-| `mimo-v2.5-pro-auto-vision-low` | Low reasoning depth |
-| `mimo-v2.5-pro-auto-vision-medium` | Medium reasoning depth |
-| `mimo-v2.5-pro-auto-vision-high` | High reasoning depth |
-| `mimo-v2.5-pro-auto-vision-max` | Maximum reasoning depth |
+| `mimo-v2.5-pro` | Default (no variant) |
+| `mimo-v2.5-pro-low` | Low reasoning depth |
+| `mimo-v2.5-pro-medium` | Medium reasoning depth |
+| `mimo-v2.5-pro-high` | High reasoning depth |
 
 ## Troubleshooting
 
@@ -179,12 +172,12 @@ node proxy/server.js
 ```
 
 **Images not processed?**
-- OpenCode: Confirm "MiMo V2.5 Pro (Auto Vision)" is selected
 - Claude Code: Confirm `ANTHROPIC_BASE_URL` points to `http://127.0.0.1:3456`
+- OpenCode: Confirm "MiMo V2.5 Pro (Auto Vision)" is selected
 
 **Model not available?**
-- Claude Code: Use `/model` to select `sonnet` (displays as MiMo V2.5 Pro)
-- Confirm `ANTHROPIC_DEFAULT_SONNET_MODEL` is set
+- Confirm `ANTHROPIC_DEFAULT_SONNET_MODEL` is set to `mimo-v2.5-pro`
+- Do NOT use `/model` to select custom model names - use standard aliases (sonnet/haiku/opus)
 
 **Cannot connect to API?**
 - Check MCP configuration format (OpenCode requires `command` + `args` separate):

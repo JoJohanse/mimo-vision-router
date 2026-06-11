@@ -17,11 +17,20 @@
 ## 架构
 
 ```
-AI 助手 → localhost:3456 (代理)
-  → 检测图片 → V2.5 提取描述
-  → 替换为文字 → V2.5 Pro
+Claude Code → localhost:3456 (代理)
+  → 检测图片 → mimo-v2.5 (Anthropic) 描述图片
+  → 替换为文字 → mimo-v2.5-pro (Anthropic)
+  → 返回结果
+
+OpenCode → localhost:3456 (代理)
+  → 检测图片 → mimo-v2.5 (OpenAI) 描述图片
+  → 替换为文字 → mimo-v2.5-pro (OpenAI)
   → 返回结果
 ```
+
+两条路径完全独立：
+- **Anthropic 路径**：Claude Code → 代理 → 小米 Anthropic 端点 (`/anthropic/v1/messages`)
+- **OpenAI 路径**：OpenCode → 代理 → 小米 OpenAI 端点 (`/v1/chat/completions`)
 
 ## 支持的 AI 助手
 
@@ -53,8 +62,8 @@ cd mimo-vision-router
 git clone https://github.com/JoJohanse/mimo-vision-router.git
 cd mimo-vision-router
 .\setup-claude.ps1
-# 脚本会提示输入 API Key 和 Base URL
-# 重启 Claude Code，使用 /model 选择 sonnet (MiMo V2.5 Pro)
+# 脚本会提示输入 API Key
+# 重启 Claude Code，直接使用即可（默认 sonnet → mimo-v2.5-pro）
 ```
 
 安装完成后，代理会通过 MCP **自动启动**，无需手动运行。
@@ -65,27 +74,23 @@ cd mimo-vision-router
 
 #### 端口占用清理
 
-安装脚本会自动检测端口 `3456` 是否被占用。如果有旧的代理进程（如 OpenCode 版本的代理）正在运行，脚本会**自动终止**该进程以释放端口。
+安装脚本会自动检测端口 `3456` 是否被占用。如果有旧的代理进程正在运行，脚本会**自动终止**该进程以释放端口。
 
 #### Claude Code 配置覆盖
 
-运行 `setup-claude.ps1` 时，脚本会**覆盖** `~/.claude/settings.json` 中的以下配置：
+运行 `setup-claude.ps1` 时，脚本会**覆盖** `~/.claude/settings.json` 中的环境变量配置，写入以下内容：
 
-| 配置项 | 原值（示例） | 新值 |
-|--------|-------------|------|
-| `ANTHROPIC_BASE_URL` | 原 API 地址 | `http://127.0.0.1:3456` |
-| `ANTHROPIC_AUTH_TOKEN` | 原 API Key | MiMo API Key |
-| `ANTHROPIC_API_KEY` | （新增） | MiMo API Key |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | （新增） | `mimo-v2.5-pro-auto-vision` |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` | （新增） | `MiMo V2.5 Pro (Auto Vision)` |
-| `model` | 原模型名 | `sonnet` |
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| `ANTHROPIC_BASE_URL` | `http://127.0.0.1:3456` | 本地代理地址 |
+| `ANTHROPIC_AUTH_TOKEN` | 用户 API Key | 认证密钥 |
+| `ANTHROPIC_SMALL_FAST_MODEL` | `mimo-v2.5` | 后台任务模型 |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `mimo-v2.5` | haiku 别名映射 |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `mimo-v2.5-pro` | sonnet 别名映射（显示为 MiMo V2.5 Pro (Auto Vision)） |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `mimo-v2.5-pro` | opus 别名映射（显示为 MiMo V2.5 Pro (Auto Vision)） |
+| `model` | `sonnet` | 默认使用 sonnet |
 
-同时，以下旧配置会被**移除**：
-- `ANTHROPIC_MODEL`
-- `ANTHROPIC_DEFAULT_HAIKU_MODEL`
-- `ANTHROPIC_DEFAULT_OPUS_MODEL`
-
-脚本会在覆盖前显示当前配置与新配置的对比，并要求用户输入 `y` 确认。输入其他内容则跳过配置更新。
+脚本会在覆盖前显示当前配置与新配置的对比，并要求用户输入 `y` 确认。
 
 #### 备份建议
 
@@ -100,28 +105,8 @@ Copy-Item "$env:USERPROFILE\.claude\settings.json" "$env:USERPROFILE\.claude\set
 - **MCP 自动启动**：代理随 AI 助手自动启动/关闭
 - **图片自动处理**：检测图片 → 生成描述 → 替换为文字
 - **双格式支持**：同时支持 OpenAI 和 Anthropic API 格式
-- **模型变体**：支持 low/medium/high/max 推理深度
+- **模型变体**：支持 low/medium/high 推理深度
 - **一键安装**：交互式配置 API 凭证
-
-## 技术实现
-
-两条路径完全独立，不共用图片处理逻辑：
-
-**OpenAI 路径 (OpenCode)**：
-```javascript
-// 检测图片 → V2.5 描述 → 替换为文字 → 转发 V2.5 Pro
-function openaiHasImages(content) {
-  return Array.isArray(content) && content.some(p => p.type === 'image_url');
-}
-```
-
-**Anthropic 路径 (Claude Code)**：
-```javascript
-// 检测图片 → V2.5 描述 → 格式转换 → 转发 V2.5 Pro
-function anthropicHasImages(content) {
-  return Array.isArray(content) && content.some(p => p.type === 'image');
-}
-```
 
 ## 配置
 
@@ -132,23 +117,32 @@ function anthropicHasImages(content) {
 ```javascript
 const PORT = 3456;                                    // 代理端口
 const UPSTREAM_HOST = 'token-plan-cn.xiaomimimo.com'; // 小米 API
-const VISION_MODEL = 'mimo-v2.5';                     // 多模态模型
+const VISION_MODEL = 'mimo-v2.5';                     // 多模态模型（用于图片描述）
 ```
 
 ### Claude Code 模型映射
 
-Claude Code 使用内置别名（sonnet/haiku/opus）映射到自定义模型：
+Claude Code 使用内置别名（sonnet/haiku/opus）映射到 MiMo 模型：
 
 ```json
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:3456",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5-pro-auto-vision",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "MiMo V2.5 Pro (Auto Vision)"
+    "ANTHROPIC_AUTH_TOKEN": "tp-xxxx",
+    "ANTHROPIC_SMALL_FAST_MODEL": "mimo-v2.5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "mimo-v2.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5-pro",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "mimo-v2.5-pro"
   },
   "model": "sonnet"
 }
 ```
+
+| 别名 | 映射模型 | 说明 |
+|------|----------|------|
+| `haiku` | `mimo-v2.5` | 快速/轻量任务 |
+| `sonnet` | `mimo-v2.5-pro` | 默认主力模型 |
+| `opus` | `mimo-v2.5-pro` | 复杂推理任务 |
 
 ### 模型变体
 
@@ -156,11 +150,10 @@ Claude Code 使用内置别名（sonnet/haiku/opus）映射到自定义模型：
 
 | 模型 | 说明 |
 |------|------|
-| `mimo-v2.5-pro-auto-vision` | 默认（无变体） |
-| `mimo-v2.5-pro-auto-vision-low` | 低推理深度 |
-| `mimo-v2.5-pro-auto-vision-medium` | 中等推理深度 |
-| `mimo-v2.5-pro-auto-vision-high` | 高推理深度 |
-| `mimo-v2.5-pro-auto-vision-max` | 最大推理深度 |
+| `mimo-v2.5-pro` | 默认（无变体） |
+| `mimo-v2.5-pro-low` | 低推理深度 |
+| `mimo-v2.5-pro-medium` | 中等推理深度 |
+| `mimo-v2.5-pro-high` | 高推理深度 |
 
 ## 故障排除
 
@@ -179,12 +172,12 @@ node proxy/server.js
 ```
 
 **图片未处理？**
-- OpenCode：确认选择 "MiMo V2.5 Pro (Auto Vision)"
 - Claude Code：确认 `ANTHROPIC_BASE_URL` 指向 `http://127.0.0.1:3456`
+- OpenCode：确认选择 "MiMo V2.5 Pro (Auto Vision)"
 
 **模型不可用？**
-- Claude Code：使用 `/model` 选择 `sonnet`（会显示为 MiMo V2.5 Pro）
-- 确认 `ANTHROPIC_DEFAULT_SONNET_MODEL` 已设置
+- 确认 `ANTHROPIC_DEFAULT_SONNET_MODEL` 设置为 `mimo-v2.5-pro`
+- 不要使用 `/model` 选择自定义模型名，使用标准别名（sonnet/haiku/opus）
 
 **连接不上 API？**
 - 检查 MCP 配置格式是否正确（OpenCode 要求 `command` + `args` 分开写）：

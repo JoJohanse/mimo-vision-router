@@ -174,8 +174,8 @@ if (-not (Test-ProxyRunning)) {
 
 # 设置环境变量
 `$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:`$port"
-if (-not `$env:ANTHROPIC_API_KEY) {
-    `$env:ANTHROPIC_API_KEY = "$ApiKey"
+if (-not `$env:ANTHROPIC_AUTH_TOKEN) {
+    `$env:ANTHROPIC_AUTH_TOKEN = "$ApiKey"
 }
 
 Write-Host "Launching Claude Code..." -ForegroundColor Cyan
@@ -268,15 +268,19 @@ if (Test-Path $claudeSettingsPath) {
         
         # 用新 env 对象整体替换（避免 PSCustomObject 无法新增属性的问题）
         $newEnv = @{
-            ANTHROPIC_API_KEY = $ApiKey
             ANTHROPIC_AUTH_TOKEN = $ApiKey
             ANTHROPIC_BASE_URL = $BaseUrl
-            ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-vision"
+            ANTHROPIC_SMALL_FAST_MODEL = "mimo-v2.5"
+            ANTHROPIC_DEFAULT_HAIKU_MODEL = "mimo-v2.5"
+            ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = "MiMo V2.5"
+            ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro"
             ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
+            ANTHROPIC_DEFAULT_OPUS_MODEL = "mimo-v2.5-pro"
+            ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = "MiMo V2.5 Pro (Auto Vision)"
         }
         $settings.env = $newEnv
         
-        # 设置默认模型为 sonnet (会映射到 mimo-v2.5-pro-auto-vision)
+        # 设置默认模型为 sonnet (会映射到 mimo-v2.5-pro)
         $settings | Add-Member -MemberType NoteProperty -Name "model" -Value "sonnet" -Force
         
         # 保存配置

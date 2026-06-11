@@ -1,9 +1,13 @@
 /**
  * MiMo Vision Proxy
  *
- * 支持 OpenAI 和 Anthropic 两种 API 格式，完全独立处理：
- * - OpenAI 路径:   POST /v1/chat/completions → v2.5(OpenAI) → v2.5-pro(OpenAI)
- * - Anthropic 路径: POST /v1/messages → v2.5(Anthropic) → v2.5-pro(Anthropic)
+ * 两条完全独立的路径：
+ *
+ * OpenAI 路径 (OpenCode):
+ *   POST /v1/chat/completions → mimo-v2.5(OpenAI) 描述图片 → mimo-v2.5-pro(OpenAI)
+ *
+ * Anthropic 路径 (Claude Code):
+ *   POST /v1/messages → mimo-v2.5(Anthropic) 描述图片 → mimo-v2.5-pro(Anthropic)
  */
 
 const http = require('http');
@@ -15,33 +19,27 @@ const UPSTREAM_HOST = 'token-plan-cn.xiaomimimo.com';
 const VISION_MODEL = 'mimo-v2.5';
 
 // ─── 模型变体配置 ──────────────────────────────────────────────
-// 变体控制思考深度 (reasoning_effort)
-// OpenCode 对 @ai-sdk/openai-compatible 使用 reasoning_effort 参数
-const SUPPORTED_VARIANTS = ['low', 'medium', 'high', 'max'];
+const SUPPORTED_VARIANTS = ['low', 'medium', 'high'];
 
-/** 解析模型名，返回 { upstreamModel, variant } */
 function resolveModelVariant(requestedModel) {
   const lower = (requestedModel || '').toLowerCase();
-  // 匹配 mimo-v2.5-pro-auto-vision-{variant} 或 mimo-v2.5-pro-{variant}
-  const match = lower.match(/^mimo-v2\.5-pro(?:-auto-vision)?-(low|medium|high|max)$/);
-  if (match) {
-    return { upstreamModel: 'mimo-v2.5-pro', variant: match[1] };
-  }
-  // 无变体的默认模型
+  const match = lower.match(/^mimo-v2\.5-pro(?:-auto-vision)?-(low|medium|high)$/);
+  if (match) return { upstreamModel: 'mimo-v2.5-pro', variant: match[1] };
   return { upstreamModel: 'mimo-v2.5-pro', variant: null };
 }
 
 // ─── 通用工具 ────────────────────────────────────────────────
 
 function extractApiKey(headers) {
-  // 支持 Authorization: Bearer xxx (OpenAI) 和 x-api-key: xxx (Anthropic/Claude Code)
   const xKey = headers['x-api-key'] || '';
   if (xKey) return xKey.trim();
   const auth = headers['authorization'] || headers['Authorization'] || '';
   return auth.replace(/^Bearer\s+/i, '').trim();
 }
 
-function httpsRequest(path, bodyJson, apiKey) {
+// ─── OpenAI 格式 HTTPS ────────────────────────────────────────
+
+function openaiHttpsRequest(path, bodyJson, apiKey) {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(bodyJson);
     const options = {
@@ -65,7 +63,7 @@ function httpsRequest(path, bodyJson, apiKey) {
   });
 }
 
-function httpsStream(path, bodyJson, apiKey) {
+function openaiHttpsStream(path, bodyJson, apiKey) {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(bodyJson);
     const options = {
@@ -85,15 +83,63 @@ function httpsStream(path, bodyJson, apiKey) {
   });
 }
 
+// ─── Anthropic 格式 HTTPS ──────────────────────────────────────
+
+function anthropicHttpsRequest(path, bodyJson, apiKey) {
+  return new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(bodyJson);
+    const options = {
+      hostname: UPSTREAM_HOST,
+      path: `/anthropic/v1${path}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(bodyStr),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+function anthropicHttpsStream(path, bodyJson, apiKey) {
+  return new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(bodyJson);
+    const options = {
+      hostname: UPSTREAM_HOST,
+      path: `/anthropic/v1${path}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(bodyStr),
+      },
+    };
+    const req = https.request(options, (res) => resolve(res));
+    req.on('error', reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════
-// OpenAI 路径 (完全独立)
+// OpenAI 路径 (完全独立，给 OpenCode 用)
 // ═══════════════════════════════════════════════════════════════
 
 function openaiHasImages(content) {
   return Array.isArray(content) && content.some(p => p.type === 'image_url');
 }
 
-/** 用 v2.5 描述图片 (OpenAI 格式调用) */
+/** 用 v2.5 描述图片 (OpenAI 格式) */
 async function openaiDescribeImages(textParts, imageUrls, apiKey) {
   const visionContent = [];
   if (textParts.length > 0) {
@@ -106,7 +152,7 @@ async function openaiDescribeImages(textParts, imageUrls, apiKey) {
   }
 
   try {
-    const result = await httpsRequest('/chat/completions', {
+    const result = await openaiHttpsRequest('/chat/completions', {
       model: VISION_MODEL,
       messages: [{ role: 'user', content: visionContent }],
       max_tokens: 4096,
@@ -116,12 +162,11 @@ async function openaiDescribeImages(textParts, imageUrls, apiKey) {
     if (result.statusCode !== 200) return '';
     return JSON.parse(result.body).choices?.[0]?.message?.content || '';
   } catch (err) {
-    console.error('[OpenAI] Vision call failed:', err.message);
+    console.error('[OpenAI-Vision] Call failed:', err.message);
     return '';
   }
 }
 
-/** 处理单条 OpenAI message */
 async function openaiProcessMessage(msg, apiKey) {
   if (!openaiHasImages(msg.content)) return msg;
 
@@ -157,28 +202,71 @@ async function handleOpenAI(body, headers) {
     messages: processedMessages,
     model: upstreamModel,
     stream,
-    // 变体控制思考深度: reasoning_effort
     ...(variant ? { reasoning_effort: variant } : {}),
   };
 
-  if (stream) return { mode: 'openai-stream', upstreamBody, apiKey };
+  if (stream) return { mode: 'openai-stream', upstreamBody, apiKey, requestedModel: body.model };
 
-  const result = await httpsRequest('/chat/completions', upstreamBody, apiKey);
+  const result = await openaiHttpsRequest('/chat/completions', upstreamBody, apiKey);
+  if (result.statusCode === 200) {
+    try {
+      const resp = JSON.parse(result.body);
+      resp.model = body.model;
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(resp) };
+    } catch {}
+  }
   return { statusCode: result.statusCode, headers: { 'Content-Type': 'application/json' }, body: result.body };
 }
 
 /** OpenAI streaming 转发 */
-function pipeOpenAIStream(upstreamBody, apiKey, res) {
-  httpsStream('/chat/completions', upstreamBody, apiKey).then((upstreamRes) => {
+function pipeOpenAIStream(upstreamBody, apiKey, res, requestedModel) {
+  openaiHttpsStream('/chat/completions', upstreamBody, apiKey).then((upstreamRes) => {
     res.writeHead(upstreamRes.statusCode || 200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    upstreamRes.pipe(res);
+
+    if (!requestedModel) {
+      upstreamRes.pipe(res);
+      res.on('close', () => upstreamRes.destroy());
+      return;
+    }
+
+    let buffer = '';
+    upstreamRes.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+          try {
+            const parsed = JSON.parse(line.slice(6));
+            parsed.model = requestedModel;
+            res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+          } catch {
+            res.write(line + '\n');
+          }
+        } else {
+          res.write(line + '\n');
+        }
+      }
+    });
+
+    upstreamRes.on('end', () => {
+      if (buffer) res.write(buffer);
+      res.end();
+    });
+
+    upstreamRes.on('error', (err) => {
+      console.error('[OpenAI-Stream] Error:', err.message);
+      if (!res.writableEnded) res.end();
+    });
+
     res.on('close', () => upstreamRes.destroy());
   }).catch((err) => {
-    console.error('[OpenAI] Stream error:', err.message);
+    console.error('[OpenAI-Stream] Init error:', err.message);
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'Upstream connection failed' } }));
@@ -187,62 +275,47 @@ function pipeOpenAIStream(upstreamBody, apiKey, res) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Anthropic 路径 (完全独立)
+// Anthropic 路径 (完全独立，给 Claude Code 用)
 // ═══════════════════════════════════════════════════════════════
 
 function anthropicHasImages(content) {
   return Array.isArray(content) && content.some(p => p.type === 'image');
 }
 
-/** Anthropic base64 image → data URL */
-function anthropicImageToDataUrl(img) {
-  const mediaType = img.source?.media_type || 'image/png';
-  return `data:${mediaType};base64,${img.source.data}`;
-}
-
-/** 用 v2.5 描述图片 (Anthropic 格式调用) */
+/** 用 v2.5 描述图片 (Anthropic 格式) */
 async function anthropicDescribeImages(textParts, imageParts, apiKey) {
-  const visionContent = [];
+  const content = [];
   if (textParts.length > 0) {
-    visionContent.push({ type: 'text', text: `User context: ${textParts.join('\n')}\n\nDescribe the image(s) in detail, including any text, code, diagrams, or visual elements.` });
+    content.push({ type: 'text', text: `User context: ${textParts.join('\n')}\n\nDescribe the image(s) in detail, including any text, code, diagrams, or visual elements.` });
   } else {
-    visionContent.push({ type: 'text', text: 'Describe this image in detail, especially any text, code, diagrams, or visual elements.' });
+    content.push({ type: 'text', text: 'Describe this image in detail, especially any text, code, diagrams, or visual elements.' });
   }
   for (const img of imageParts) {
-    visionContent.push({
+    content.push({
       type: 'image',
-      source: {
-        type: 'base64',
-        media_type: img.source.media_type || 'image/png',
-        data: img.source.data,
-      },
+      source: { type: 'base64', media_type: img.source.media_type || 'image/png', data: img.source.data },
     });
   }
 
-  // 转为 OpenAI 格式调用 v2.5 (上游只支持 OpenAI)
-  const openaiContent = visionContent.map(p => {
-    if (p.type === 'text') return { type: 'text', text: p.text };
-    if (p.type === 'image') return { type: 'image_url', image_url: { url: anthropicImageToDataUrl(p) } };
-    return p;
-  });
-
   try {
-    const result = await httpsRequest('/chat/completions', {
+    const result = await anthropicHttpsRequest('/messages', {
       model: VISION_MODEL,
-      messages: [{ role: 'user', content: openaiContent }],
       max_tokens: 4096,
-      stream: false,
+      messages: [{ role: 'user', content }],
     }, apiKey);
 
-    if (result.statusCode !== 200) return '';
-    return JSON.parse(result.body).choices?.[0]?.message?.content || '';
+    if (result.statusCode !== 200) {
+      console.error('[Anthropic-Vision] Upstream error:', result.statusCode);
+      return '';
+    }
+    const resp = JSON.parse(result.body);
+    return resp.content?.map(p => p.text).join('') || '';
   } catch (err) {
-    console.error('[Anthropic] Vision call failed:', err.message);
+    console.error('[Anthropic-Vision] Call failed:', err.message);
     return '';
   }
 }
 
-/** 处理单条 Anthropic message */
 async function anthropicProcessMessage(msg, apiKey) {
   if (!anthropicHasImages(msg.content)) return msg;
 
@@ -265,55 +338,6 @@ async function anthropicProcessMessages(messages, apiKey) {
   return processed;
 }
 
-/** Anthropic → OpenAI 请求转换 (用于转发到上游) */
-function anthropicToOpenAI(body) {
-  const messages = [];
-  if (body.system) messages.push({ role: 'system', content: body.system });
-
-  for (const msg of body.messages || []) {
-    if (typeof msg.content === 'string') {
-      messages.push({ role: msg.role, content: msg.content });
-    } else if (Array.isArray(msg.content)) {
-      const openaiContent = [];
-      for (const part of msg.content) {
-        if (part.type === 'text') {
-          openaiContent.push({ type: 'text', text: part.text });
-        } else if (part.type === 'image') {
-          openaiContent.push({ type: 'image_url', image_url: { url: anthropicImageToDataUrl(part) } });
-        }
-      }
-      messages.push({ role: msg.role, content: openaiContent });
-    }
-  }
-
-  return {
-    model: body.model,
-    messages,
-    max_tokens: body.max_tokens || 4096,
-    temperature: body.temperature,
-    top_p: body.top_p,
-    stream: body.stream || false,
-  };
-}
-
-/** OpenAI → Anthropic 响应转换 */
-function openAIToAnthropicResponse(openaiResp) {
-  const choice = openaiResp.choices?.[0];
-  return {
-    id: `msg_${crypto.randomBytes(12).toString('hex')}`,
-    type: 'message',
-    role: 'assistant',
-    content: [{ type: 'text', text: choice?.message?.content || '' }],
-    model: openaiResp.model || 'mimo-v2.5-pro',
-    stop_reason: choice?.finish_reason === 'stop' ? 'end_turn' : choice?.finish_reason || 'end_turn',
-    stop_sequence: null,
-    usage: {
-      input_tokens: openaiResp.usage?.prompt_tokens || 0,
-      output_tokens: openaiResp.usage?.completion_tokens || 0,
-    },
-  };
-}
-
 /** 处理 Anthropic 请求 */
 async function handleAnthropic(body, headers) {
   const apiKey = extractApiKey(headers);
@@ -325,132 +349,54 @@ async function handleAnthropic(body, headers) {
     };
   }
 
-  // Step 1: 处理 Anthropic 格式的图片
+  // 处理图片
   const processedMessages = await anthropicProcessMessages(body.messages || [], apiKey);
+  const upstreamBody = { ...body, messages: processedMessages };
 
-  // Step 2: 转换为 OpenAI 格式用于转发
-  const openaiBody = anthropicToOpenAI({ ...body, messages: processedMessages });
-  const { upstreamModel, variant } = resolveModelVariant(body.model);
-  openaiBody.model = upstreamModel;
-  // 变体控制思考深度: reasoning_effort
-  if (variant) {
-    openaiBody.reasoning_effort = variant;
-  }
+  if (body.stream) return { mode: 'anthropic-stream', upstreamBody, apiKey };
 
-  if (body.stream) return { mode: 'anthropic-stream', upstreamBody: openaiBody, apiKey };
-
-  // Step 3: 非 streaming: 调用上游，转换响应
-  const result = await httpsRequest('/chat/completions', openaiBody, apiKey);
-  if (result.statusCode !== 200) {
-    return { statusCode: result.statusCode, headers: { 'Content-Type': 'application/json' }, body: result.body };
-  }
-
-  const anthropicResp = openAIToAnthropicResponse(JSON.parse(result.body));
-  return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(anthropicResp) };
+  const result = await anthropicHttpsRequest('/messages', upstreamBody, apiKey);
+  return { statusCode: result.statusCode, headers: { 'Content-Type': 'application/json' }, body: result.body };
 }
 
-/** Anthropic streaming: OpenAI SSE → Anthropic SSE */
+/** Anthropic streaming 直通 */
 function pipeAnthropicStream(upstreamBody, apiKey, res) {
-  const anthropicModel = upstreamBody.model || 'mimo-v2.5-pro';
-
-  httpsStream('/chat/completions', upstreamBody, apiKey).then((upstreamRes) => {
-    if (upstreamRes.statusCode !== 200) {
-      res.writeHead(upstreamRes.statusCode, { 'Content-Type': 'application/json' });
-      upstreamRes.pipe(res);
-      return;
-    }
-
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-
-    const msgId = `msg_${crypto.randomBytes(12).toString('hex')}`;
-    let started = false;
-    let buffer = '';
-    let blockIndex = 0;
-
-    res.write(`event: message_start\ndata: ${JSON.stringify({
-      type: 'message_start',
-      message: { id: msgId, type: 'message', role: 'assistant', content: [], model: anthropicModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } },
-    })}\n\n`);
-
-    upstreamRes.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
-        const dataStr = trimmed.slice(6);
-        if (dataStr === '[DONE]') {
-          if (!res.writableEnded) {
-            res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: blockIndex })}\n\n`);
-            res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } })}\n\n`);
-            res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-            res.end();
-          }
-          return;
-        }
-
-        try {
-          const parsed = JSON.parse(dataStr);
-          const delta = parsed.choices?.[0]?.delta;
-          if (!delta) continue;
-
-          if (!started) {
-            started = true;
-            res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: blockIndex, content_block: { type: 'text', text: '' } })}\n\n`);
-          }
-
-          if (delta.content) {
-            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: blockIndex, delta: { type: 'text_delta', text: delta.content } })}\n\n`);
-          }
-        } catch {}
-      }
+  anthropicHttpsStream('/messages', upstreamBody, apiKey).then((upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 200, {
+      'Content-Type': upstreamRes.headers['content-type'] || 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
     });
-
-    upstreamRes.on('end', () => {
-      if (!res.writableEnded) {
-        if (!started) {
-          res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: blockIndex, content_block: { type: 'text', text: '' } })}\n\n`);
-        }
-        res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: blockIndex })}\n\n`);
-        res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } })}\n\n`);
-        res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-        res.end();
-      }
-    });
-
-    upstreamRes.on('error', (err) => {
-      console.error('[Anthropic] Stream error:', err.message);
-      if (!res.writableEnded) res.end();
-    });
-
+    upstreamRes.pipe(res);
     res.on('close', () => upstreamRes.destroy());
   }).catch((err) => {
-    console.error('[Anthropic] Stream init error:', err.message);
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream connection failed' } }));
+    console.error('[Anthropic-Stream] Error:', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream connection failed' } }));
+    }
   });
 }
 
 // ─── HTTP 服务器 ─────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, anthropic-version, x-api-key');
 
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
-  // POST /v1/chat/completions (OpenAI)
-  if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+  // POST /v1/chat/completions (OpenAI → 小米 OpenAI)
+  if (req.method === 'POST' && req.url.startsWith('/v1/chat/completions')) {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', async () => {
       try {
         const parsed = JSON.parse(body);
         const result = await handleOpenAI(parsed, req.headers);
-        if (result.mode === 'openai-stream') { pipeOpenAIStream(result.upstreamBody, result.apiKey, res); return; }
+        if (result.mode === 'openai-stream') { pipeOpenAIStream(result.upstreamBody, result.apiKey, res, result.requestedModel); return; }
         res.writeHead(result.statusCode, result.headers || { 'Content-Type': 'application/json' });
         res.end(result.body);
       } catch (err) {
@@ -462,8 +408,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // POST /v1/messages (Anthropic)
-  if (req.method === 'POST' && req.url === '/v1/messages') {
+  // POST /v1/messages (Anthropic → 小米 Anthropic)
+  if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', async () => {
@@ -489,29 +435,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // GET /v1/models
-  if (req.method === 'GET' && req.url === '/v1/models') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      data: [
-        { id: 'mimo-v2.5-pro-auto-vision',          object: 'model', owned_by: 'xiaomi' },
-        { id: 'mimo-v2.5-pro-auto-vision-low',      object: 'model', owned_by: 'xiaomi' },
-        { id: 'mimo-v2.5-pro-auto-vision-medium',   object: 'model', owned_by: 'xiaomi' },
-        { id: 'mimo-v2.5-pro-auto-vision-high',     object: 'model', owned_by: 'xiaomi' },
-        { id: 'mimo-v2.5-pro-auto-vision-max',      object: 'model', owned_by: 'xiaomi' },
-      ],
-    }));
-    return;
-  }
-
   res.writeHead(404); res.end();
 });
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`🚀 MiMo Vision Proxy running on http://127.0.0.1:${PORT}`);
-  console.log(`   Upstream: https://${UPSTREAM_HOST}/v1`);
-  console.log(`   OpenAI:    POST /v1/chat/completions`);
-  console.log(`   Anthropic: POST /v1/messages`);
+  console.log(`   OpenAI:    POST /v1/chat/completions → /v1/chat/completions`);
+  console.log(`   Anthropic: POST /v1/messages → /anthropic/v1/messages`);
   console.log(`   Vision:    ${VISION_MODEL} → Text: mimo-v2.5-pro`);
 });
 
