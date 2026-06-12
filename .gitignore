@@ -1,0 +1,22 @@
+# 代理服务器副本（主文件在 proxy/ 目录中）
+/server.js
+/mcp-launcher.js
+/start.ps1
+
+# 启动脚本副本（由安装脚本生成）
+/start-claude.ps1
+/claude.cmd
+
+# 系统文件
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+tmp/
+temp/
