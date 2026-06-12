@@ -197,17 +197,61 @@ Write-Ok "start-claude.ps1"
 Write-Step "[6/7] Configuring MCP server..."
 
 $mcpLauncher = Join-Path $installDir "mcp-launcher.js"
-try {
-    # 移除已有的 mimo-proxy MCP 配置（如果存在）
-    & claude mcp remove mimo-proxy 2>$null
-} catch {}
+
+# 创建全局 MCP 配置文件（确保在任何目录都能跟随启动）
+$globalMcpConfigPath = "$env:USERPROFILE\.claude\mcp.json"
+$globalMcpConfig = @{
+    mcpServers = @{
+        "mimo-vision-proxy" = @{
+            command = "node"
+            args = @($mcpLauncher.Replace('\', '/'))
+            env = @{}
+            disabled = $false
+        }
+    }
+}
 
 try {
-    & claude mcp add mimo-proxy -- node $mcpLauncher
-    Write-Ok "MCP server 'mimo-proxy' configured"
-    Write-Host "  Proxy will auto-start when Claude Code launches" -ForegroundColor Gray
+    # 确保 .claude 目录存在
+    $claudeDir = "$env:USERPROFILE\.claude"
+    if (-not (Test-Path $claudeDir)) {
+        New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+    }
+
+    # 如果已存在配置文件，合并配置
+    if (Test-Path $globalMcpConfigPath) {
+        try {
+            $existingConfig = Get-Content $globalMcpConfigPath -Raw | ConvertFrom-Json
+            if ($existingConfig.mcpServers) {
+                # 添加或更新 mimo-vision-proxy 配置
+                $existingConfig.mcpServers | Add-Member -MemberType NoteProperty -Name "mimo-vision-proxy" -Value $globalMcpConfig.mcpServers."mimo-vision-proxy" -Force
+                $globalMcpConfig = $existingConfig
+            }
+        } catch {
+            Write-Warn "Failed to read existing mcp.json, will overwrite"
+        }
+    }
+
+    # 写入配置
+    $globalMcpConfig | ConvertTo-Json -Depth 10 | Set-Content $globalMcpConfigPath -Encoding UTF8
+    Write-Ok "Global MCP config created: $globalMcpConfigPath"
+    Write-Host "  Proxy will auto-start in any directory" -ForegroundColor Gray
 } catch {
-    Write-Warn "Failed to configure MCP server. You can manually start the proxy with start-claude.ps1"
+    Write-Warn "Failed to create global MCP config: $_"
+    Write-Host "  Falling back to project-level MCP config..." -ForegroundColor Yellow
+
+    # 备选方案：使用 claude mcp add 命令
+    try {
+        & claude mcp remove mimo-proxy 2>$null
+    } catch {}
+
+    try {
+        & claude mcp add mimo-proxy -- node $mcpLauncher
+        Write-Ok "MCP server 'mimo-proxy' configured (project-level)"
+        Write-Host "  Note: This may only work in the current directory" -ForegroundColor Yellow
+    } catch {
+        Write-Warn "Failed to configure MCP server. You can manually start the proxy with start-claude.ps1"
+    }
 }
 
 # 创建快速启动脚本
