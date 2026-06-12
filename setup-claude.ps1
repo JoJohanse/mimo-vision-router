@@ -198,46 +198,41 @@ Write-Step "[6/7] Configuring MCP server..."
 
 $mcpLauncher = Join-Path $installDir "mcp-launcher.js"
 
-# 创建全局 MCP 配置文件（确保在任何目录都能跟随启动）
-$globalMcpConfigPath = "$env:USERPROFILE\.claude\mcp.json"
-$globalMcpConfig = @{
-    mcpServers = @{
-        "mimo-vision-proxy" = @{
-            command = "node"
-            args = @($mcpLauncher.Replace('\', '/'))
-            env = @{}
-            disabled = $false
-        }
-    }
+# 全局 MCP 配置路径（~/.claude.json 的 mcpServers 字段）
+$globalClaudeConfigPath = "$env:USERPROFILE\.claude.json"
+
+# MCP 服务器配置
+$mcpServerConfig = @{
+    type = "stdio"
+    command = "node"
+    args = @($mcpLauncher.Replace('\', '\\'))
+    env = @{}
 }
 
 try {
-    # 确保 .claude 目录存在
-    $claudeDir = "$env:USERPROFILE\.claude"
-    if (-not (Test-Path $claudeDir)) {
-        New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+    # 读取现有的 ~/.claude.json 配置
+    if (Test-Path $globalClaudeConfigPath) {
+        $claudeConfig = Get-Content $globalClaudeConfigPath -Raw | ConvertFrom-Json
+    } else {
+        $claudeConfig = @{}
     }
 
-    # 如果已存在配置文件，合并配置
-    if (Test-Path $globalMcpConfigPath) {
-        try {
-            $existingConfig = Get-Content $globalMcpConfigPath -Raw | ConvertFrom-Json
-            if ($existingConfig.mcpServers) {
-                # 添加或更新 mimo-vision-proxy 配置
-                $existingConfig.mcpServers | Add-Member -MemberType NoteProperty -Name "mimo-vision-proxy" -Value $globalMcpConfig.mcpServers."mimo-vision-proxy" -Force
-                $globalMcpConfig = $existingConfig
-            }
-        } catch {
-            Write-Warn "Failed to read existing mcp.json, will overwrite"
-        }
+    # 确保 mcpServers 字段存在
+    if (-not $claudeConfig.mcpServers) {
+        $claudeConfig | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value @{} -Force
     }
 
-    # 写入配置
-    $globalMcpConfig | ConvertTo-Json -Depth 10 | Set-Content $globalMcpConfigPath -Encoding UTF8
-    Write-Ok "Global MCP config created: $globalMcpConfigPath"
+    # 添加或更新 mimo-proxy 配置
+    $claudeConfig.mcpServers | Add-Member -MemberType NoteProperty -Name "mimo-proxy" -Value $mcpServerConfig -Force
+
+    # 保存配置
+    $claudeConfig | ConvertTo-Json -Depth 10 | Set-Content $globalClaudeConfigPath -Encoding UTF8
+    Write-Ok "MCP server configured in: $globalClaudeConfigPath"
+    Write-Host "  Server name: mimo-proxy" -ForegroundColor Gray
+    Write-Host "  Command: node $mcpLauncher" -ForegroundColor Gray
     Write-Host "  Proxy will auto-start in any directory" -ForegroundColor Gray
 } catch {
-    Write-Warn "Failed to create global MCP config: $_"
+    Write-Warn "Failed to configure global MCP server: $_"
     Write-Host "  Falling back to project-level MCP config..." -ForegroundColor Yellow
 
     # 备选方案：使用 claude mcp add 命令
