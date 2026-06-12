@@ -210,27 +210,46 @@ $mcpServerConfig = @{
 }
 
 try {
-    # 读取现有的 ~/.claude.json 配置
-    if (Test-Path $globalClaudeConfigPath) {
-        $claudeConfig = Get-Content $globalClaudeConfigPath -Raw | ConvertFrom-Json
+    # 使用 Node.js 直接写入 MCP 配置（避免 PowerShell JSON 解析重复键问题）
+    $mcpConfigScript = @"
+const fs = require('fs');
+const configPath = '$($globalClaudeConfigPath.Replace('\', '\\'))';
+const mcpLauncher = '$($mcpLauncher.Replace('\', '\\\\'))';
+
+let config = {};
+try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+    // 文件不存在或解析失败，使用空配置
+}
+
+if (!config.mcpServers) {
+    config.mcpServers = {};
+}
+
+config.mcpServers['mimo-proxy'] = {
+    type: 'stdio',
+    command: 'node',
+    args: [mcpLauncher],
+    env: {}
+};
+
+fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+console.log('MCP server configured successfully');
+"@
+    $tempFile = [System.IO.Path]::GetTempFileName() + ".js"
+    Set-Content -Path $tempFile -Value $mcpConfigScript -Encoding UTF8
+    $nodeResult = & node $tempFile 2>&1
+    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "MCP server configured in: $globalClaudeConfigPath"
+        Write-Host "  Server name: mimo-proxy" -ForegroundColor Gray
+        Write-Host "  Command: node $mcpLauncher" -ForegroundColor Gray
+        Write-Host "  Proxy will auto-start in any directory" -ForegroundColor Gray
     } else {
-        $claudeConfig = @{}
+        throw "Node.js execution failed: $nodeResult"
     }
-
-    # 确保 mcpServers 字段存在
-    if (-not $claudeConfig.mcpServers) {
-        $claudeConfig | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value @{} -Force
-    }
-
-    # 添加或更新 mimo-proxy 配置
-    $claudeConfig.mcpServers | Add-Member -MemberType NoteProperty -Name "mimo-proxy" -Value $mcpServerConfig -Force
-
-    # 保存配置
-    $claudeConfig | ConvertTo-Json -Depth 10 | Set-Content $globalClaudeConfigPath -Encoding UTF8
-    Write-Ok "MCP server configured in: $globalClaudeConfigPath"
-    Write-Host "  Server name: mimo-proxy" -ForegroundColor Gray
-    Write-Host "  Command: node $mcpLauncher" -ForegroundColor Gray
-    Write-Host "  Proxy will auto-start in any directory" -ForegroundColor Gray
 } catch {
     Write-Warn "Failed to configure global MCP server: $_"
     Write-Host "  Falling back to project-level MCP config..." -ForegroundColor Yellow
@@ -265,68 +284,97 @@ Write-Step "[7/7] Writing environment variables to Claude Code settings..."
 $claudeSettingsPath = "$env:USERPROFILE\.claude\settings.json"
 if (Test-Path $claudeSettingsPath) {
     try {
-        $settings = Get-Content $claudeSettingsPath -Raw | ConvertFrom-Json
-        
-        # 显示当前配置并警告用户
-        Write-Host ""
-        Write-Host "  ⚠️  WARNING: This will overwrite your existing Claude Code settings!" -ForegroundColor Yellow
-        Write-Host "  ─────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
-        
-        if ($settings.env.ANTHROPIC_BASE_URL) {
-            Write-Host "  Current ANTHROPIC_BASE_URL: $($settings.env.ANTHROPIC_BASE_URL)" -ForegroundColor Gray
-        }
-        if ($settings.env.ANTHROPIC_AUTH_TOKEN) {
-            $maskedToken = if ($settings.env.ANTHROPIC_AUTH_TOKEN.Length -gt 8) { 
-                "$($settings.env.ANTHROPIC_AUTH_TOKEN.Substring(0, 8))..." 
-            } else { 
-                "***" 
+        # 使用 Node.js 读取和更新 settings.json
+        $settingsScript = @"
+const fs = require('fs');
+const configPath = '$($claudeSettingsPath.Replace('\', '\\'))';
+
+let settings = {};
+try {
+    settings = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+    settings = {};
+}
+
+// 保存当前配置用于显示
+const current = {
+    ANTHROPIC_BASE_URL: settings.env?.ANTHROPIC_BASE_URL || '',
+    ANTHROPIC_AUTH_TOKEN: settings.env?.ANTHROPIC_AUTH_TOKEN || '',
+    ANTHROPIC_MODEL: settings.env?.ANTHROPIC_MODEL || '',
+    model: settings.model || ''
+};
+
+// 更新配置
+if (!settings.env) settings.env = {};
+settings.env.ANTHROPIC_AUTH_TOKEN = '$ApiKey';
+settings.env.ANTHROPIC_BASE_URL = '$BaseUrl';
+settings.env.ANTHROPIC_SMALL_FAST_MODEL = 'mimo-v2.5';
+settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'mimo-v2.5';
+settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = 'MiMo V2.5';
+settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'mimo-v2.5-pro-auto-version';
+settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = 'MiMo V2.5 Pro(Auto Version)';
+settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'mimo-v2.5-pro-auto-version';
+settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = 'MiMo V2.5 Pro(Auto Version)';
+settings.model = 'sonnet';
+
+fs.writeFileSync(configPath, JSON.stringify(settings, null, 2), 'utf8');
+
+// 输出当前配置供 PowerShell 显示
+console.log(JSON.stringify(current));
+"@
+        $tempFile = [System.IO.Path]::GetTempFileName() + ".js"
+        Set-Content -Path $tempFile -Value $settingsScript -Encoding UTF8
+        $currentJson = & node $tempFile 2>&1
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+
+        if ($LASTEXITCODE -eq 0) {
+            $current = $currentJson | ConvertFrom-Json
+
+            # 显示当前配置并警告用户
+            Write-Host ""
+            Write-Host "  ⚠️  WARNING: This will overwrite your existing Claude Code settings!" -ForegroundColor Yellow
+            Write-Host "  ─────────────────────────────────────────────────────────────────" -ForegroundColor Yellow
+
+            if ($current.ANTHROPIC_BASE_URL) {
+                Write-Host "  Current ANTHROPIC_BASE_URL: $($current.ANTHROPIC_BASE_URL)" -ForegroundColor Gray
             }
-            Write-Host "  Current ANTHROPIC_AUTH_TOKEN: $maskedToken" -ForegroundColor Gray
+            if ($current.ANTHROPIC_AUTH_TOKEN) {
+                $maskedToken = if ($current.ANTHROPIC_AUTH_TOKEN.Length -gt 8) {
+                    "$($current.ANTHROPIC_AUTH_TOKEN.Substring(0, 8))..."
+                } else {
+                    "***"
+                }
+                Write-Host "  Current ANTHROPIC_AUTH_TOKEN: $maskedToken" -ForegroundColor Gray
+            }
+            if ($current.ANTHROPIC_MODEL) {
+                Write-Host "  Current ANTHROPIC_MODEL: $($current.ANTHROPIC_MODEL)" -ForegroundColor Gray
+            }
+            if ($current.model) {
+                Write-Host "  Current model: $($current.model)" -ForegroundColor Gray
+            }
+
+            Write-Host ""
+            Write-Host "  New settings:" -ForegroundColor Cyan
+            Write-Host "  ANTHROPIC_BASE_URL: $BaseUrl" -ForegroundColor Cyan
+            Write-Host "  ANTHROPIC_AUTH_TOKEN: $($ApiKey.Substring(0, [Math]::Min(8, $ApiKey.Length)))..." -ForegroundColor Cyan
+            Write-Host "  model: sonnet" -ForegroundColor Cyan
+            Write-Host ""
+
+            # 确认是否继续
+            $confirm = Read-Host "  Continue? (y/N)"
+            if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+                Write-Warn "Skipped settings update"
+                Write-Host "  You can manually update $claudeSettingsPath" -ForegroundColor Yellow
+                return
+            }
+
+            # Node.js 已经更新了配置，显示成功信息
+            Write-Ok "Environment variables written to settings.json"
+            Write-Host "  ANTHROPIC_AUTH_TOKEN: $($ApiKey.Substring(0, [Math]::Min(8, $ApiKey.Length)))..." -ForegroundColor Gray
+            Write-Host "  ANTHROPIC_BASE_URL: $BaseUrl" -ForegroundColor Gray
+        } else {
+            throw "Node.js execution failed: $currentJson"
         }
-        if ($settings.env.ANTHROPIC_MODEL) {
-            Write-Host "  Current ANTHROPIC_MODEL: $($settings.env.ANTHROPIC_MODEL)" -ForegroundColor Gray
-        }
-        if ($settings.model) {
-            Write-Host "  Current model: $($settings.model)" -ForegroundColor Gray
-        }
-        
-        Write-Host ""
-        Write-Host "  New settings:" -ForegroundColor Cyan
-        Write-Host "  ANTHROPIC_BASE_URL: $BaseUrl" -ForegroundColor Cyan
-        Write-Host "  ANTHROPIC_AUTH_TOKEN: $($ApiKey.Substring(0, [Math]::Min(8, $ApiKey.Length)))..." -ForegroundColor Cyan
-        Write-Host "  model: sonnet" -ForegroundColor Cyan
-        Write-Host ""
-        
-        # 确认是否继续
-        $confirm = Read-Host "  Continue? (y/N)"
-        if ($confirm -ne 'y' -and $confirm -ne 'Y') {
-            Write-Warn "Skipped settings update"
-            Write-Host "  You can manually update $claudeSettingsPath" -ForegroundColor Yellow
-            return
-        }
-        
-        # 用新 env 对象整体替换（避免 PSCustomObject 无法新增属性的问题）
-        $newEnv = @{
-            ANTHROPIC_AUTH_TOKEN = $ApiKey
-            ANTHROPIC_BASE_URL = $BaseUrl
-            ANTHROPIC_SMALL_FAST_MODEL = "mimo-v2.5"
-            ANTHROPIC_DEFAULT_HAIKU_MODEL = "mimo-v2.5"
-            ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = "MiMo V2.5"
-            ANTHROPIC_DEFAULT_SONNET_MODEL = "mimo-v2.5-pro-auto-version"
-            ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = "MiMo V2.5 Pro(Auto Version)"
-            ANTHROPIC_DEFAULT_OPUS_MODEL = "mimo-v2.5-pro-auto-version"
-            ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = "MiMo V2.5 Pro(Auto Version)"
-        }
-        $settings.env = $newEnv
-        
-        # 设置默认模型为 sonnet (会映射到 mimo-v2.5-pro)
-        $settings | Add-Member -MemberType NoteProperty -Name "model" -Value "sonnet" -Force
-        
-        # 保存配置
-        $settings | ConvertTo-Json -Depth 10 | Set-Content $claudeSettingsPath -Encoding UTF8
-        Write-Ok "Environment variables written to settings.json"
-        Write-Host "  ANTHROPIC_AUTH_TOKEN: $($ApiKey.Substring(0, [Math]::Min(8, $ApiKey.Length)))..." -ForegroundColor Gray
-        Write-Host "  ANTHROPIC_BASE_URL: $BaseUrl" -ForegroundColor Gray
     } catch {
         Write-Warn "Failed to update settings.json: $_"
         Write-Host "  Please manually add these to $claudeSettingsPath" -ForegroundColor Yellow
